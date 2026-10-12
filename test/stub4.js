@@ -1,0 +1,96 @@
+// 测试页 4：假的 sim 引荐网站页（结构照 10-12 实测：表头 4 栏在 wrapper 外、数据 4 栏在 wrapper 里，
+// 翻页时整张表连同页码栏先拆掉、300ms 后画回来，页码框先显示 1、稍后才变成真页码）。
+// 页面放在 iframe 里，真的把 extension/ref.js 注入进去跑（用 iframe 自己的 fetch 取文件：测试页 2/3 换掉了 window.fetch）。
+(() => {
+  const REF = 'https://sim.3ue.co/#/digitalsuite/websiteanalysis/referrals/*/999/28d?webSource=Total&selectedTab=incomingTraffic&key=checkout.stripe.com';
+  const N = 974, SIZE = 100;
+  const IND = ['计算机电子与技术', 'Programming and Developer Software', 'Games', 'Tennis', '艺术与娱乐', ''];
+  // 前几行用 10-12 在真实引荐页上看到的域名和行业，排版评审时看得出长域名、中英混排的样子
+  const REAL = [['higgsfield.ai', '计算机电子与技术'], ['elevenlabs.io', 'Programming and Developer Software'], ['topview.ai', 'Graphics Multimedia and Web Design'],
+    ['journaldesfemmes.fr', '未知'], ['playtennis.usta.com', 'Tennis'], [null], ['drmax.pl', 'Biotechnology and Pharmaceuticals'], [null],
+    ['gamebillet.com', 'Video Games Consoles and Accessories'], ['activities.bookpebble.co.uk', '未知'], ['evolink.ai', 'Programming and Developer Software'],
+    ['yepbooking.com.au', 'Travel and Tourism'], ['mai-ko.com', '未知'], ['jpx-jquants.com', 'Finance'], ['app.mailerfind.com', 'Marketing and Advertising']];
+  const rows = Array.from({ length: N }, (_, i) => ({
+    d: i === 5 ? 'similarweb.com' : i === 7 ? 'pro.similarweb.com' : REAL[i]?.[0] || `site${i}.com`,
+    ind: REAL[i]?.[1] || IND[i % IND.length], rank: i % 9 === 0 ? '-' : `#${(i + 1) * 37}`.replace(/\B(?=(\d{3})+(?!\d))/g, ','),
+    share: `${(7 - i * 0.007).toFixed(2)}%`, sub: i === 3 ? 2 : 0,
+  }));
+  const page = `<!doctype html><html><body><div id="app"></div><script>
+    const rows = ${JSON.stringify(rows)}, SIZE = ${SIZE}, PAGES = Math.ceil(rows.length / SIZE);
+    let cur = 1;
+    window.__href = ${JSON.stringify(REF)};  // iframe 的地址是 about:srcdoc：读表结果里的 href 换成它（可改，模拟用户跳到别的页面）
+    const app = document.getElementById('app');
+    const col = (cells) => '<div class="u-relative swReactTable-column">' + cells.map((c) => '<div class="swReactTableCell swTable-cell">' + c + '</div>').join('') + '<div class="resizeable-border"></div></div>';
+    function draw() {
+      const rs = rows.slice((cur - 1) * SIZE, cur * SIZE);
+      const head = ['域 (' + rows.length + ')', '行业', '全球排名', '流量份额'].map((h) => '<div class="u-relative swReactTable-column"><div>' + h + '</div><div></div></div>').join('');
+      app.innerHTML = '<div class="hdr">' + head + '</div><div class="swReactTable-wrapper">' +
+        col(rs.map((r) => '<div class="domain-cell"><div class="swTable-content-small text"><a href="#" class="cell-clickable">' + r.d + '</a></div>' + (r.sub ? '<span>(' + r.sub + ')</span>' : '') + '</div>')) +
+        col(rs.map((r) => r.ind)) + col(rs.map((r) => r.rank)) + col(rs.map((r) => r.share)) + '</div>' +
+        '<div class="bar"><div class="a"><svg></svg></div><div class="a"><svg></svg></div><div><div><input value="1"></div><span>out of ' + PAGES + '</span></div><div class="a"><svg></svg></div><div class="a"><svg></svg></div></div>';
+      const inp = app.querySelector('input');
+      // 页码框先显示 1，稍后才变成真页码：默认排在页面变化通知之后；__inputLag 毫秒 = 模拟更慢的更新（Codex 10-12 #5）
+      const lag = window.parent.__inputLag || 0;
+      if (lag) setTimeout(() => { inp.value = String(cur); }, lag); else queueMicrotask(() => { inp.value = String(cur); });
+      app.querySelectorAll('.bar .a').forEach((b, i) => b.addEventListener('click', () => go([1, cur - 1, cur + 1, PAGES][i])));
+    }
+    function go(n) {
+      if (n < 1 || n > PAGES || n === cur) return;
+      cur = n; app.innerHTML = '<div class="loading"></div>';
+      window.__flips = (window.__flips || 0) + 1;
+      setTimeout(draw, 300);
+    }
+    setTimeout(draw, window.parent.__refLoadDelay || 500);
+  <\/script></body></html>`;
+
+  let frame = null;
+  function load() {
+    frame?.remove();
+    frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;left:-9999px;width:800px;height:600px';
+    frame.srcdoc = page;
+    document.body.appendChild(frame);
+    window.__refFrame = frame;
+  }
+  const REF_TAB = 55;            // 「用户已经开着」的那个引荐页
+  let nextTab = 60;              // 后台新开的引荐页从 60 起编号，每开一个换一个号（测标签页归属）
+  window.__refTabs = new Set([REF_TAB]);
+  window.__refOpen = false;     // true：假装用户已经开着引荐页
+  window.__removedTabs = [];
+  const prevQuery = chrome.tabs.query, prevCreate = chrome.tabs.create, prevExec = chrome.scripting.executeScript;
+  chrome.tabs.query = async (q) => {
+    if (q && q.url === 'https://sim.3ue.co/*') return window.__refOpen ? [{ id: REF_TAB, url: REF }] : [{ id: 7, url: 'https://sim.3ue.co/#/home' }];
+    return prevQuery(q);
+  };
+  chrome.tabs.create = async (opts) => {
+    if (/websiteanalysis\/referrals/.test(opts.url) && opts.active === false) {
+      const id = nextTab++;
+      window.__refTabs.add(id);
+      window.__refCreatedIds = [...(window.__refCreatedIds || []), id];
+      window.__refCreated = opts; load(); return { id };
+    }
+    return prevCreate(opts);
+  };
+  chrome.tabs.remove = async (id) => { window.__removedTabs.push(id); };
+  chrome.tabs.get = async (id) => {
+    if (window.__refTabs.has(id) && !window.__removedTabs.includes(id)) return { id, url: frame?.contentWindow.__href || REF, active: false };
+    throw new Error('No tab with id: ' + id);
+  };
+  window.__refBroken = false;  // true：假装引荐页被关掉（测出错卡片）
+  chrome.scripting.executeScript = async (o) => {
+    if (!window.__refTabs.has(o.target.tabId)) return prevExec(o);
+    if (window.__refBroken || window.__removedTabs.includes(o.target.tabId)) throw new Error('No tab with id: ' + o.target.tabId);
+    const w = frame.contentWindow;
+    if (w.document.readyState !== 'complete') throw new Error('Frame is still loading');
+    if (o.files) { w.eval(await (await w.fetch(new URL('../extension/' + o.files[0], location.href).href)).text()); return [{}]; }
+    const result = await w.eval('(' + o.func.toString() + ')').apply(null, o.args || []);
+    if (result && typeof result === 'object' && 'href' in result) result.href = w.__href;
+    return [{ result }];
+  };
+  window.__refLoad = load;
+  // 上一份：site0–site899 里去掉 site10–site19，所以本月首次出现 = site10–19 + site900–973
+  const prevItems = rows.slice(0, 900).filter((_, i) => i < 10 || i >= 20).filter((r) => !/similarweb/.test(r.d))
+    .map((r, i) => ({ d: r.d, industry: r.ind, grank: r.rank, share: r.share, sub: r.sub, rank: i + 1 }));
+  // daysAgo：这份存了多少天（≥30 会自动重拉，<30 不动）
+  window.__seedRefCache = (daysAgo) => { window.__wcStore['stripe-ref-v1'] = { items: prevItems, at: Date.now() - daysAgo * 86400000, total: 900, prev: null }; };
+})();

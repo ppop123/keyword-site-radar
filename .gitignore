@@ -1,0 +1,16 @@
+# 本机服务的运行时数据：注册日缓存、快照库、日志、RDAP 引导表（服务自己会重建）
+var/
+
+# 状态帧单张：`node test/frames.cjs <目录>` 随时按当前代码重新截。
+# 只留评审用的总览图和版本对照图（旧版、变体的代码已经删了，没法重截，是设计定案的证据）
+design/frames*/*.png
+!design/frames*/contact-*.png
+!design/frames-v2/compare-variants-*.png
+design/frames-v2/A-blue/
+design/frames-v2/A-green/
+design/frames-v2/B-blue/
+
+.DS_Store
+__pycache__/
+*.pyc
+node_modules/

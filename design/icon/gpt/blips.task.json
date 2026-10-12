@@ -1,0 +1,38 @@
+{
+ "code": 200,
+ "data": {
+  "actual_time": 37,
+  "completed": 1791798344,
+  "cost": 0.04292,
+  "created": 1791798307,
+  "credits_cost": 0.4292,
+  "estimated_time": 60,
+  "id": "task_01M4QR0TBKJ3KTCTWEB51QDPB4",
+  "progress": 100,
+  "result": {
+   "images": [
+    {
+     "expires_at": 1791884744,
+     "url": [
+      "https://getapib.org/image/9998208201656028-45b3fbc0-bdd6-4ddf-b089-b960ad53513d-image_task_01M4QR1Y93VRXK96MFEF676TXC_0.png"
+     ]
+    }
+   ]
+  },
+  "status": "completed",
+  "usage": {
+   "input_tokens": 194,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "image_tokens": 0,
+    "text_tokens": 194
+   },
+   "output_tokens": 1756,
+   "output_tokens_details": {
+    "image_tokens": 1756,
+    "text_tokens": 0
+   },
+   "total_tokens": 1950
+  }
+ }
+}
