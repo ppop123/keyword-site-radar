@@ -438,13 +438,20 @@ def _one(domain):
     return domain, None, "；".join(notes), transient
 
 
-def lookup(domains, cached_only=False):
-    """cached_only：只回本机已经查过的，没查过的不联网、也不出现在结果里（找站先秒出已知的域龄）"""
+def _free(reg, note):
+    """没注册：RDAP 404 或 whois 明说没有这个域名，而且哪边都没说「有记录、不公开」"""
+    note = note or ""
+    return not reg and ("RDAP 404" in note or "whois 无此域名" in note) and "不公开" not in note and "无注册日" not in note
+
+
+def lookup(domains, cached_only=False, recheck=False):
+    """cached_only：只回本机已经查过的，没查过的不联网、也不出现在结果里（找站先秒出已知的域龄）。
+    recheck：没查到注册日的不用缓存、重新查（查域名能不能注册时，3 天前的「没有」不算数）"""
     out, todo, now = {}, [], time.time()
     for d in domains:
         row = cache_get(d)
-        if row and (row["reg"] or now - row["checked_at"] < MISS_TTL):
-            out[d] = {"reg": row["reg"], "source": row["source"], "cached": True}
+        if row and (row["reg"] or (not recheck and now - row["checked_at"] < MISS_TTL)):
+            out[d] = {"reg": row["reg"], "source": row["source"], "cached": True, "free": _free(row["reg"], row["source"])}
         else:
             todo.append(d)
     if cached_only:
@@ -453,7 +460,7 @@ def lookup(domains, cached_only=False):
         for d, reg, note, transient in ex.map(_one, todo):
             if reg or not transient:
                 cache_put(d, reg, note)
-            out[d] = {"reg": reg, "source": note, "cached": False}
+            out[d] = {"reg": reg, "source": note, "cached": False, "free": not transient and _free(reg, note)}
     return out
 
 
@@ -507,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
                                                            req.get("pageHost") or "")})
             if self.path == "/lookup":
                 domains = [d for d in req.get("domains") or [] if isinstance(d, str)][:20]
-                return self._send(200, {"results": lookup(domains, req.get("cachedOnly") is True)})
+                return self._send(200, {"results": lookup(domains, req.get("cachedOnly") is True, req.get("recheck") is True)})
             if self.path.startswith("/snapshot/"):
                 try:
                     if self.path == "/snapshot/get":

@@ -41,7 +41,7 @@ a:hover { color: var(--link-hover); }
 .brand { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .brand .name { font-weight: 700; }
 .ctx { font-size: 12px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.seg { display: grid; grid-template-columns: 6fr 4fr 3fr 3fr; }
+.seg { display: grid; grid-template-columns: 6fr 4fr 3fr 3fr 4fr; }
 .seg button { height: 34px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink2); font-weight: 600; cursor: pointer; }
 .seg button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 
@@ -168,3 +168,7 @@ a:hover { color: var(--link-hover); }
 .frow .lbl { line-height: 26px; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .num { font-variant-numeric: tabular-nums; }
+
+/* 查域名 */
+.namebar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin: 0; }
+.drow.free .dname span { color: var(--ink2); }

@@ -124,6 +124,10 @@
       }
       window.__lookups.single++;
       await new Promise((r) => setTimeout(r, 20));
+      if (body.recheck) {  // 查域名：三分之一没注册，其余给注册日
+        return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.map((d) => [d, hash(d) % 3 === 0
+          ? { reg: null, source: 'RDAP 404；whois 无此域名', cached: false, free: true } : { reg: regOf(d), source: 'RDAP', cached: false, free: false }])) }) };
+      }
       return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.map((d) => [d, { reg: regOf(d), source: 'whois', cached: false }])) }) };
     }
     return prevFetch(u, opts);

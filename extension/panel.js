@@ -132,7 +132,7 @@ const foldRow = (act, open, text) =>
 
 // ---------- 页面状态 ----------
 
-const S = { view: null, tab: null, shown: null, scroll: { domains: 0, hot: 0, words: 0, refs: 0 } };
+const S = { view: null, tab: null, shown: null, scroll: { domains: 0, hot: 0, words: 0, refs: 0, names: 0 } };
 
 async function refreshContext() {
   S.tab = await activeTab();
@@ -144,10 +144,7 @@ async function refreshContext() {
 
 function setView(v) {
   S.view = v;
-  $('#tab-domains').setAttribute('aria-selected', String(v === 'domains'));
-  $('#tab-hot').setAttribute('aria-selected', String(v === 'hot'));
-  $('#tab-words').setAttribute('aria-selected', String(v === 'words'));
-  $('#tab-refs').setAttribute('aria-selected', String(v === 'refs'));
+  for (const t of ['domains', 'hot', 'words', 'refs', 'names']) $(`#tab-${t}`)?.setAttribute('aria-selected', String(v === t));
   render();
 }
 
@@ -162,6 +159,7 @@ function render() {
   else if (S.view === 'hot') renderHot();
   else if (S.view === 'words') renderWords();
   else if (S.view === 'refs') renderRefs();
+  else if (S.view === 'names') renderNames();
   S.shown = S.view;
   const now = view.querySelector('.list');
   if (now && S.view) now.scrollTop = S.scroll[S.view] || 0;
@@ -1316,6 +1314,113 @@ function renderRefs() {
   renderRefList();
 }
 
+// ================= 查域名：一个关键词的各种组合 × 常用后缀，注册了没有、哪天注册的 =================
+// 用户 10-12 要的：给一个关键词，查它合理组合在 .com .net .org .ai .io .app .video 下的注册情况，
+// 完整域名 + 注册时间，从近到远排。复用本机服务的 RDAP → whois；查「能不能注册」不用 3 天内的「没有」缓存（recheck）
+
+const NAME_TLDS = ['com', 'net', 'org', 'ai', 'io', 'app', 'video'];
+const NAME_STOP = new Set(['to', 'for', 'and', 'the', 'a', 'an', 'of', 'in', 'on', 'with', 'by', 'at', 'my', 'your']);
+const N = { q: '', status: 'idle', forms: [], rows: [], done: 0, run: 0 };
+
+// 组合：连写、连字符、去掉 to / for / the 这类虚词（连写、连字符）、to → 2、for → 4
+function nameForms(kw) {
+  let t = kw.trim().toLowerCase();
+  if (!/\s/.test(t)) t = t.replace(/\.[a-z]{2,}$/, '');  // 贴进来的是域名：去掉后缀
+  const plain = t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');  // é → e；中文等其他文字不硬转，整个不查
+  if (/[^\x00-\x7f]/.test(plain)) return [];
+  const words = plain.split(/[^a-z0-9]+/).filter(Boolean);
+  const out = [];
+  const add = (f) => { if (f && f.length <= 63 && !out.includes(f)) out.push(f); };
+  const both = (ws) => { add(ws.join('')); if (ws.length > 1) add(ws.join('-')); };
+  if (!words.length) return out;
+  both(words);
+  const core = words.filter((w) => !NAME_STOP.has(w));
+  if (core.length && core.length < words.length) both(core);
+  if (words.includes('to') && words.length > 1) add(words.map((w) => (w === 'to' ? '2' : w)).join(''));
+  if (words.includes('for') && words.length > 1) add(words.map((w) => (w === 'for' ? '4' : w)).join(''));
+  return out;
+}
+
+// 一个域名查到的结果归成四种：有注册日 / 注册了但不公开日期 / 没注册 / 没查成
+function nameState(r) {
+  if (!r) return 'pending';
+  if (r.reg) return 'reg';
+  if (r.free) return 'free';
+  if (/不公开|无注册日/.test(r.source || '')) return 'hidden';
+  return 'fail';
+}
+
+async function runNames(q) {
+  const forms = nameForms(q);
+  const my = ++N.run;
+  const alive = () => my === N.run;
+  Object.assign(N, { q, forms, status: forms.length ? 'running' : 'bad', done: 0, err: null,
+    rows: forms.flatMap((f) => NAME_TLDS.map((t) => ({ d: `${f}.${t}`, r: null }))) });
+  scrollTop('names');
+  render();
+  if (!forms.length) return;
+  let next = 0, down = null;
+  const worker = async () => {
+    while (next < N.rows.length && alive() && !down) {
+      const row = N.rows[next++];
+      try {
+        const { results } = await api('/lookup', { domains: [row.d], recheck: true });
+        if (!alive()) return;
+        row.r = results[row.d] || { reg: null, source: '没有结果' };
+      } catch (e) {
+        if (!alive()) return;
+        if (e.down) { down = e; return; }
+        row.r = { reg: null, source: e.message };
+      }
+      N.done++;
+      render();
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  if (!alive()) return;
+  Object.assign(N, down ? { status: 'error', err: down } : { status: 'done' });
+  render();
+}
+
+// 注册日从近到远；注册了但不公开日期的、没查成的跟在后面，没注册的放最后
+function namesSorted() {
+  const rank = { reg: 0, hidden: 1, fail: 2, pending: 3, free: 4 };
+  return [...N.rows].sort((a, b) => {
+    const sa = nameState(a.r), sb = nameState(b.r);
+    if (sa !== sb) return rank[sa] - rank[sb];
+    return sa === 'reg' ? b.r.reg.localeCompare(a.r.reg) : 0;
+  });
+}
+
+function nameRow(x) {
+  const st = nameState(x.r);
+  const name = st === 'free' ? `<div class="dname"><span>${esc(x.d)}</span></div>`
+    : `<div class="dname"><a class="ext" href="${esc(domainUrl(x.d))}" title="在 sim 看 ${esc(x.d)} 的新进关键词">${esc(x.d)}</a>` +
+      `<a class="ext site" href="https://${esc(x.d)}/" title="打开 ${esc(x.d)}" aria-label="打开 ${esc(x.d)}">${ICON_OPEN}</a></div>`;
+  if (st === 'reg') return `<div class="drow">${name}<span class="c-reg" title="来源：${esc(x.r.source)}">${esc(x.r.reg)}</span><span class="c-age">${ageText(x.r.reg)}</span></div>`;
+  const text = { pending: '查询中…', hidden: '已注册 · 不公开注册日', fail: '没查成', free: '未注册' }[st];
+  return `<div class="drow${st === 'free' ? ' free' : ''}">${name}<span class="c-miss" title="${esc(x.r?.source || '')}">${text}</span></div>`;
+}
+
+function renderNames() {
+  const count = (s) => N.rows.filter((x) => nameState(x.r) === s).length;
+  let html = `<div class="list"><section class="status">
+    <form class="namebar" data-act="n-form"><input class="search" type="search" data-act="n-input" placeholder="关键词，比如 pdf to jpg" value="${esc(N.q)}" aria-label="关键词" autocomplete="off">
+      <button class="btn primary" type="submit">查询</button></form>`;
+  if (N.status === 'bad') html += '<div class="meta">只能查英文字母和数字组成的关键词。</div>';
+  if (N.forms.length) {
+    html += `<div class="meta">${N.forms.map(esc).join(' · ')} × .${NAME_TLDS.join(' .')}</div>`;
+    html += `<div class="meta">${N.status === 'running' ? `查询中 ${N.done} / ${N.rows.length} · ` : ''}已注册 ${count('reg') + count('hidden')} · 未注册 ${count('free')}${count('fail') ? ` · 没查成 ${count('fail')}` : ''}</div>`;
+  }
+  html += '</section>';
+  if (N.status === 'error' && N.err?.down) html += serviceDownCard('查注册日');
+  if (N.rows.length) {
+    html += '<div class="sticky"><div class="colhead"><span class="c-kw">域名</span><span class="c-reg">注册日</span><span class="c-age">域龄</span></div></div>';
+    html += namesSorted().map(nameRow).join('');
+  }
+  view.innerHTML = html + '</div>';
+}
+
 // ---------- 事件 ----------
 
 // 新标签页打开。先挂在收集用的那个标签页后面；那个标签页关了或挪到别的窗口时 Chrome 会拒绝，
@@ -1343,7 +1448,7 @@ view.addEventListener('click', async (ev) => {
   if (!el || el.tagName === 'SELECT') return;
   const act = el.dataset.act;
   if (act === 'scan') runDomains();
-  else if (act === 'retry') S.view === 'hot' ? probeHot() : runDomains();
+  else if (act === 'retry') S.view === 'hot' ? probeHot() : S.view === 'names' ? runNames(N.q) : runDomains();
   else if (act === 'copy-cmd') { await navigator.clipboard.writeText(SERVICE_CMD); el.textContent = '已复制'; }
   else if (act === 'dom-filter') { D.filter = el.dataset.f; scrollTop('domains'); render(); }
   else if (act === 'dom-gone') { D.goneOpen = !D.goneOpen; render(); }
@@ -1388,6 +1493,14 @@ view.addEventListener('change', async (ev) => {
 $('#tab-domains').onclick = () => setView('domains');
 $('#tab-words').onclick = () => setView('words');
 $('#tab-refs').onclick = () => setView('refs');
+$('#tab-names').onclick = () => { setView('names'); if (N.status === 'idle') view.querySelector('[data-act="n-input"]')?.focus(); };
+// 查域名：回车或点「查询」
+view.addEventListener('submit', (ev) => {
+  if (ev.target.dataset.act !== 'n-form') return;
+  ev.preventDefault();
+  const q = ev.target.querySelector('[data-act="n-input"]').value;
+  if (q.trim()) runNames(q);
+});
 $('#tab-hot').onclick = () => {
   if (!['running', 'done'].includes(H.status)) probeHot();
   setView('hot');

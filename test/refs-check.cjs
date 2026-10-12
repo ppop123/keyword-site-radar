@@ -193,6 +193,25 @@ const CASES = {
       (keyOf(x.href) === x.t || (x.t.includes('…') && keyOf(x.href).startsWith(x.t.split('…')[0]) && keyOf(x.href).endsWith(x.t.split('…')[1]))));
     return [okText, okHref, r];
   },
+  async '查域名：组合 × 7 个后缀，注册日从近到远、没注册的放最后'(p) {
+    const forms = await p.evaluate(() => ({ multi: nameForms('PDF to JPG'), one: nameForms('jpg'), dom: nameForms('pdftojpg.com'),
+      accent: nameForms('café menu'), cjk: nameForms('图片转pdf'), forx: nameForms('tools for seo') }));
+    await p.click('#tab-names');
+    await p.fill('[data-act=n-input]', 'pdf to jpg');
+    await p.press('[data-act=n-input]', 'Enter');
+    await until(p, () => N.status === 'done');
+    const r = await p.evaluate(() => {
+      const rows = [...document.querySelectorAll('.list .drow')].map((el) => ({ d: el.querySelector('.dname').textContent.trim(), reg: el.querySelector('.c-reg')?.textContent || '', miss: el.querySelector('.c-miss')?.textContent || '' }));
+      const regs = rows.filter((x) => x.reg).map((x) => x.reg);
+      const firstFree = rows.findIndex((x) => x.miss === '未注册');
+      return { n: rows.length, sorted: regs.every((d, i) => i === 0 || regs[i - 1] >= d), freeLast: firstFree > 0 && rows.slice(firstFree).every((x) => x.miss === '未注册'),
+        free: rows.filter((x) => x.miss === '未注册').length, tlds: [...new Set(rows.map((x) => x.d.split('.').pop()))].join(','), focus: document.activeElement?.dataset?.act };
+    });
+    const okForms = JSON.stringify(forms.multi) === '["pdftojpg","pdf-to-jpg","pdfjpg","pdf-jpg","pdf2jpg"]' && JSON.stringify(forms.one) === '["jpg"]' &&
+      JSON.stringify(forms.dom) === '["pdftojpg"]' && JSON.stringify(forms.accent) === '["cafemenu","cafe-menu"]' && forms.cjk.length === 0 &&
+      JSON.stringify(forms.forx) === '["toolsforseo","tools-for-seo","toolsseo","tools-seo","tools4seo"]';
+    return [okForms, r.n === 35 && r.tlds.split(',').sort().join(',') === 'ai,app,com,io,net,org,video', r.sorted && r.freeLast && r.free > 0, { forms, ...r }];
+  },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {
     await p.evaluate(() => window.__seedRefCache(5));
     await p.click('#tab-refs');
