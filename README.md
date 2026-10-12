@@ -146,7 +146,7 @@ Chrome 侧边栏插件，配一个本机小服务。**只在 sim.3ue.co 上采�
 
 ## 代码
 
-用 git 管理（2026-10-12 起，`main` 分支，只在本机，没有远程仓库）。不纳入：`var/`（本机服务的缓存、快照库、日志）和状态帧单张（`node test/frames.cjs` 随时重截）；评审用的总览图和版本对照图留在库里。验收命令：`node test/refs-check.cjs`（找站 10 个场景），界面改动用 `node test/frames.cjs <目录>` 截亮暗两套帧看。
+用 git 管理（2026-10-12 起，`main` 分支），公开仓库 https://github.com/ppop123/keyword-site-radar （用户 10-12 定：公开，项目里带的数据也公开；提交作者用 GitHub 匿名邮箱）。不纳入：`var/`（本机服务的缓存、快照库、日志）和状态帧单张（`node test/frames.cjs` 随时重截）；评审用的总览图和版本对照图留在库里。验收命令：`node test/refs-check.cjs`（找站 10 个场景），界面改动用 `node test/frames.cjs <目录>` 截亮暗两套帧看。
 
 | 文件 | 作用 |
 |---|---|
