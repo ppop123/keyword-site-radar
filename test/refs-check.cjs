@@ -2,7 +2,14 @@
 // 跑在测试页 4 上：假 sim 引荐页在 iframe 里，真把 extension/ref.js 注入进去。
 const { spawn } = require('child_process');
 const path = require('path');
-const { chromium } = require('/Users/wy/cafe/pdftojpg/node_modules/playwright');
+// Playwright：先用本项目装的（npm install），没有就用环境变量 PLAYWRIGHT_MODULE 指向的那份
+function loadPlaywright() {
+  try { return require('playwright'); } catch { /* 没装在本项目 */ }
+  if (process.env.PLAYWRIGHT_MODULE) return require(process.env.PLAYWRIGHT_MODULE);
+  console.error('找不到 Playwright：先在项目目录运行 npm install && npx playwright install chromium');
+  process.exit(2);
+}
+const { chromium } = loadPlaywright();
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = 4994;

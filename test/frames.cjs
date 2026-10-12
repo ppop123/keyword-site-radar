@@ -1,9 +1,16 @@
 // 把侧边栏各视图的真实状态截成图（亮色 / 暗色各一套），给设计评审用。
-// 用法：node test/frames.cjs [输出目录]（默认 design/frames/）；ONLY=名字片段 只截那几张。用的是本机别的项目装好的 Playwright。
+// 用法：node test/frames.cjs [输出目录]（默认 design/frames/）；ONLY=名字片段 只截那几张。Playwright 见 package.json。
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { chromium } = require('/Users/wy/cafe/pdftojpg/node_modules/playwright');
+// Playwright：先用本项目装的（npm install），没有就用环境变量 PLAYWRIGHT_MODULE 指向的那份
+function loadPlaywright() {
+  try { return require('playwright'); } catch { /* 没装在本项目 */ }
+  if (process.env.PLAYWRIGHT_MODULE) return require(process.env.PLAYWRIGHT_MODULE);
+  console.error('找不到 Playwright：先在项目目录运行 npm install && npx playwright install chromium');
+  process.exit(2);
+}
+const { chromium } = loadPlaywright();
 
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'design/frames'));
@@ -76,6 +83,12 @@ const FRAMES = [
     await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done', null, 120000);
     await p.click('[data-act=r-young]');
     await p.waitForTimeout(300);
+  }],
+  ['10-names-done', async (p) => {
+    await p.click('#tab-names');
+    await p.fill('[data-act=n-input]', 'pdf to jpg');
+    await p.press('[data-act=n-input]', 'Enter');
+    await until(p, () => N.status === 'done');
   }],
   ['9-refs-error', async (p) => {
     await p.evaluate(() => { window.__refBroken = true; });
