@@ -185,13 +185,18 @@ const CASES = {
     await until(p, () => !!document.querySelector('[data-act=collect]'));
     await p.click('[data-act=collect]');
     await until(p, () => !document.querySelector('[data-act=stop]') && !!document.querySelector('[data-act=export]'));
-    const r = await p.evaluate(() => [...document.querySelectorAll('.list .hrow .topurl')].slice(0, 6).map((a) => ({ t: a.textContent, href: a.getAttribute('href') })));
+    const r = await p.evaluate(() => [...document.querySelectorAll('.list .hrow')].slice(0, 6).map((row) => {
+      const a = row.querySelector('.topurl'), icon = row.querySelector('.trends + a.site');
+      const item = H.items.find((x) => x.kw === row.querySelector('.kw').textContent);
+      return { t: a.textContent, href: a.getAttribute('href'), page: icon?.getAttribute('href'), url: item?.url };
+    }));
+    const okIcon = r.every((x) => x.page && x.page === x.url);
     const okText = r.length === 6 && r.every((x) => !/^www\./.test(x.t) && /\./.test(x.t));
     // 太长的站名会省中间（「pdf-page-a….vercel.app」）：链接里的是完整站名，显示的字对得上头尾就行
     const keyOf = (href) => decodeURIComponent((href.match(/[?&]key=([^&]+)/) || [])[1] || '');
     const okHref = r.every((x) => x.href.includes('website-keyword-v2') &&
       (keyOf(x.href) === x.t || (x.t.includes('…') && keyOf(x.href).startsWith(x.t.split('…')[0]) && keyOf(x.href).endsWith(x.t.split('…')[1]))));
-    return [okText, okHref, r];
+    return [okText, okHref, okIcon, r];
   },
   async '查域名：组合 × 7 个后缀，注册日从近到远、没注册的放最后'(p) {
     const forms = await p.evaluate(() => ({ multi: nameForms('PDF to JPG'), one: nameForms('jpg'), dom: nameForms('pdftojpg.com'),
@@ -225,6 +230,25 @@ const CASES = {
     await until(p, () => R.regFor === R.at && R.regStatus === 'done');
     const end = await p.evaluate(() => ({ missing: R.items.filter((x) => R.dom[x.d] && !R.dom[x.d].hosted && !R.reg[R.dom[x.d].d]?.reg).length }));
     return [!mid.regFor && mid.failed > 0, end.missing === 0, { mid, end }];
+  },
+  async '五轮#5 服务回 200 但是临时错误（限流）：不算查完，过会儿补；超过 3 天的「没有」再问'(p) {
+    await p.evaluate(() => { window.__lookupTransient = true; });
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done' && R.regRunFor === R.at);
+    const mid = await p.evaluate(() => ({ regFor: R.regFor === R.at, errFor: R.regErrFor === R.at }));
+    await p.evaluate(() => { window.__lookupTransient = false; R.regErrAt = 0; render(); });
+    await until(p, () => R.regFor === R.at && R.regStatus === 'done');
+    const end = await p.evaluate(() => R.items.filter((x) => R.dom[x.d] && !R.dom[x.d].hosted && !R.reg[R.dom[x.d].d]?.reg).length);
+    // 3 天后：有「没有」的才再问
+    const again = await p.evaluate(async () => {
+      const d = Object.values(R.dom).find((m) => m && !m.hosted).d;
+      R.reg[d] = { reg: null, source: 'RDAP 404；whois 无此域名' };
+      const before = window.__lookups.cachedOnly;
+      R.regDoneAt = Date.now() - 4 * 86400000; render();
+      await new Promise((res) => setTimeout(res, 1500));
+      return window.__lookups.cachedOnly > before;
+    });
+    return [!mid.regFor && mid.errFor, end === 0, again, { mid, end, again }];
   },
   async '四轮#3 刷新后旧一轮的失败不覆盖新一轮'(p) {
     await p.click('#tab-refs');

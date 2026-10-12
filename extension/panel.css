@@ -104,6 +104,8 @@ a:hover { color: var(--link-hover); }
 .trends { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 1px solid var(--trends-line); border-radius: 999px;
   color: var(--trends-ink); font-size: 12px; font-weight: 600; white-space: nowrap; vertical-align: middle; }
 .trends:hover { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.kwcell a.site { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 26px; vertical-align: middle; color: var(--ink3); }
+.kwcell a.site:hover { color: var(--accent); }
 .nums { flex: none; display: flex; flex-direction: column; align-items: flex-end; }
 .numrow { display: flex; gap: 4px; height: 26px; }
 .numrow > .c-num, .numrow > .c-ratio { display: flex; align-items: center; justify-content: flex-end; }

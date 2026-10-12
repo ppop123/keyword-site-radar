@@ -606,10 +606,12 @@ function shortHost(host) {
 function hotRow(x, order, chg, filter) {
   const badge = chg.get(x.kw) && filter !== 'first' ? '<span class="badge new" title="上次查询的名单里没有">首次出现</span>' : '';
   const host = topHost(x.url);
+  // Trends 后面：直接打开这个词的热门网址，看那一页具体是什么内容（用户 10-12 要的）
+  const page = /^https?:\/\//i.test(x.url || '') ? `<a class="ext site" href="${esc(x.url)}" title="打开热门网址：${esc(x.url)}" aria-label="打开热门网址">${ICON_OPEN}</a>` : '';
   const top = host ? `<a class="ext topurl" href="${esc(domainUrl(host))}" title="热门网址：${esc(x.url)}\n点开看 ${esc(host)} 的新进关键词">${esc(shortHost(host))}</a>` : '';
   return `<div class="hrow"><span class="c-rank">${order}</span>
     <div class="kwcell"><a class="ext kw" href="${esc(kwUrl(x.kw))}" title="${esc(x.kw)}（表里第 ${x.rank} 名）">${esc(x.kw)}</a>
-      <a class="ext trends" href="${esc(trendsUrl(x.kw))}" title="Google Trends 近 1 个月，和 ${TRENDS_BASE} 对比">Trends</a> ${badge}</div>
+      <a class="ext trends" href="${esc(trendsUrl(x.kw))}" title="Google Trends 近 1 个月，和 ${TRENDS_BASE} 对比">Trends</a>${page ? ' ' + page : ''} ${badge}</div>
     <div class="nums"><div class="numrow"><span class="c-num">${esc(x.t)}</span><span class="c-num dim">${esc(x.v)}</span>
       <span class="c-ratio"><span class="ratio ${x.red ? 'red' : 'orange'}">${fmtRatio(x)}</span></span></div>${top}</div></div>`;
 }
@@ -1144,7 +1146,9 @@ function normHost(h) {
 async function lookupRefAges() {
   const items = R.items;
   // 这一份查完了就不再查；正在查的不重开；上次失败（多半服务没开）隔一分钟再试（Codex 10-12 第四轮 #6）
-  if (!items.length || R.regFor === R.at || (R.regStatus === 'running' && R.regRunFor === R.at)) return;
+  // 查完的这一份：超过 3 天、而且有没查到注册日的，再问一遍（服务端的「没有」缓存也是 3 天）
+  const stale = R.regFor === R.at && Date.now() - (R.regDoneAt || 0) > 3 * 86400000 && R.items.some((x) => R.dom[x.d] && !R.dom[x.d].hosted && !R.reg[R.dom[x.d].d]?.reg);
+  if (!items.length || (R.regFor === R.at && !stale) || (R.regStatus === 'running' && R.regRunFor === R.at)) return;
   if (R.regErrFor === R.at && Date.now() - R.regErrAt < 60000) return;
   const at = R.at;
   const my = (R.regRun = (R.regRun || 0) + 1);
@@ -1189,7 +1193,8 @@ async function lookupRefAges() {
         try {
           const { results } = await api('/lookup', { domains: [d] });
           if (!alive()) return;
-          Object.assign(R.reg, results);
+          if (results[d]?.transient) failed++;  // 服务那边限流、超时：算没查成，过会儿补（第五轮 #5）
+          else Object.assign(R.reg, results);
         } catch (e) {
           if (!alive()) return;  // 旧的一轮出错不许写进新的一轮（第四轮 #3）
           if (e.down) { down = e; return; }
@@ -1204,7 +1209,7 @@ async function lookupRefAges() {
     if (!alive()) return;
     if (down) throw down;
     // 有查失败的：这一份不算查完，过一分钟再补查那些（不然一次临时出错会挂 30 天）
-    Object.assign(R, failed ? { regStatus: 'done', regErrFor: at, regErrAt: Date.now() } : { regStatus: 'done', regFor: at });
+    Object.assign(R, failed ? { regStatus: 'done', regErrFor: at, regErrAt: Date.now() } : { regStatus: 'done', regFor: at, regDoneAt: Date.now() });
   } catch (e) {
     if (!alive()) return;
     Object.assign(R, { regStatus: 'error', regErr: e, regErrFor: at, regErrAt: Date.now() });
@@ -1284,7 +1289,7 @@ function renderRefs() {
   if (R.status === 'idle') { view.innerHTML = ''; loadRefs(); return; }
   // 同一个侧边栏开着跨过了 30 天：照样自动更新一次
   if (R.status === 'done' && refDue(R.at) && R.autoTriedFor !== R.at && !refJob) setTimeout(() => loadRefs(), 0);
-  if (R.status === 'done' && R.regFor !== R.at) setTimeout(() => lookupRefAges(), 0);
+  if (R.status === 'done' && (R.regFor !== R.at || Date.now() - (R.regDoneAt || 0) > 3 * 86400000)) setTimeout(() => lookupRefAges(), 0);
   const top = '<div class="list">';
   if (R.status === 'stopped') {
     view.innerHTML = `${top}<section class="card"><h2>已停止</h2><p>还没有存下来的 Stripe 引荐网站。</p>

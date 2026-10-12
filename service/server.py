@@ -463,6 +463,12 @@ def _one_shared(domain):
     if not owner:
         return fut.result(), False
     try:
+        # 排在后面的请求：刚有人查到注册日（1 分钟内）就直接用，不再查一次、免得盖掉它（Codex 10-12 第五轮 #2）
+        row = cache_get(domain)
+        if row and row["reg"] and time.time() - row["checked_at"] < 60:
+            res = (domain, row["reg"], row["source"], False)
+            fut.set_result(res)
+            return res, False
         res = _one(domain)
         d, reg, note, transient = res
         if reg or not transient:
@@ -491,7 +497,8 @@ def lookup(domains, cached_only=False, recheck=False):
         return out
     with ThreadPoolExecutor(6) as ex:
         for (d, reg, note, transient), _ in ex.map(_one_shared, todo):
-            out[d] = {"reg": reg, "source": note, "cached": False, "free": not transient and _free(reg, note)}
+            # transient：限流、超时这类临时错误（没写缓存），侧边栏要当成没查成、过会儿再查（第五轮 #5）
+            out[d] = {"reg": reg, "source": note, "cached": False, "free": not transient and _free(reg, note), "transient": transient}
     return out
 
 
