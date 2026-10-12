@@ -130,18 +130,6 @@ const CASES = {
     const r = await p.evaluate(() => ({ focused: document.activeElement?.dataset?.act, value: document.activeElement?.value }));
     return [r.focused === 'r-search' && r.value === 'site1', r];
   },
-  async '二轮#10 同一个标签页换了另一张关键词表：快捷条照样显示'(p) {
-    const r = await p.evaluate(() => {
-      const a = 'https://sim.3ue.co/#/organicsearch/pageAnalysis/website-keyword-v2/*/999/28d?key=a.com&Change=New';
-      const b = 'https://sim.3ue.co/#/organicsearch/pageAnalysis/website-keyword-v2/*/999/28d?key=b.com&Change=New';
-      H = { status: 'done', loop: 0, tabId: 7, url: a };
-      S.tab = { id: 7, url: a }; const same = hotShortcut();
-      S.tab = { id: 7, url: b }; const other = hotShortcut();
-      H = { status: 'running', loop: 0, tabId: 9, url: a }; const running = hotShortcut();
-      return { same: !!same, other: !!other, running: !!running };
-    });
-    return [!r.same && r.other && !r.running, r];
-  },
   async '三轮#1 停止后马上重拉：旧一轮收拾时用户切到它的页，不关'(p) {
     await p.evaluate(() => { window.__slowCancel = 600; });
     await p.click('#tab-refs');
@@ -178,7 +166,8 @@ const CASES = {
     await p.waitForTimeout(600);  // 等最后一次就地刷新
     const r = await p.evaluate(async () => {
       const young = R.items.filter(refYoung).length;
-      const pills = document.querySelectorAll('#rlist .agecell .age').length, all = R.items.length;
+      const pills = document.querySelectorAll('#rlist .agecell .age, #rlist .agecell .tag').length, all = R.items.length;
+      const hosted = [...document.querySelectorAll('#rlist .agecell .tag')].map((t) => t.closest('.hrow').querySelector('.dname a').textContent);
       const chip = document.querySelector('[data-act=r-young]').textContent;
       const look = new Set(Object.values(R.dom).filter(Boolean).map((m) => m.d)).size;
       document.querySelector('[data-act=r-young]').click();
@@ -187,9 +176,9 @@ const CASES = {
       document.querySelector('[data-act=r-copy]').click();
       await new Promise((res) => setTimeout(res, 100));
       const lines = (window.__copied || '').split('\n');
-      return { young, pills, all, chip, look, rows, copyLabel, lines: lines.length, head: lines[0], cols: lines[1]?.split('\t').length, sample: lines[1], ...window.__lookups };
+      return { young, pills, all, hosted, chip, look, rows, copyLabel, lines: lines.length, head: lines[0], cols: lines[1]?.split('\t').length, sample: lines[1], ...window.__lookups };
     });
-    return [r.young > 0 && r.chip === `1 年内注册 ${r.young}`, r.pills === r.all, r.rows === r.young && r.copyLabel === `复制 ${r.young} 个`,
+    return [r.young > 0 && r.chip === `1 年内注册 ${r.young}`, r.pills === r.all && JSON.stringify(r.hosted) === '["pdf-merge-demo.vercel.app"]', r.rows === r.young && r.copyLabel === `复制 ${r.young} 个`,
       r.lines === r.young + 1 && r.cols === 8, r.cachedOnly === Math.ceil(r.look / 20) && r.single > 0, r];
   },
   async '热门网址：每行显示站名，点开是它的新进关键词页'(p) {
@@ -198,7 +187,10 @@ const CASES = {
     await until(p, () => !document.querySelector('[data-act=stop]') && !!document.querySelector('[data-act=export]'));
     const r = await p.evaluate(() => [...document.querySelectorAll('.list .hrow .topurl')].slice(0, 6).map((a) => ({ t: a.textContent, href: a.getAttribute('href') })));
     const okText = r.length === 6 && r.every((x) => !/^www\./.test(x.t) && /\./.test(x.t));
-    const okHref = r.every((x) => x.href.includes('website-keyword-v2') && x.href.includes('key=' + encodeURIComponent(x.t)));
+    // 太长的站名会省中间（「pdf-page-a….vercel.app」）：链接里的是完整站名，显示的字对得上头尾就行
+    const keyOf = (href) => decodeURIComponent((href.match(/[?&]key=([^&]+)/) || [])[1] || '');
+    const okHref = r.every((x) => x.href.includes('website-keyword-v2') &&
+      (keyOf(x.href) === x.t || (x.t.includes('…') && keyOf(x.href).startsWith(x.t.split('…')[0]) && keyOf(x.href).endsWith(x.t.split('…')[1]))));
     return [okText, okHref, r];
   },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {

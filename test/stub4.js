@@ -7,7 +7,7 @@
   const IND = ['计算机电子与技术', 'Programming and Developer Software', 'Games', 'Tennis', '艺术与娱乐', ''];
   // 前几行用 10-12 在真实引荐页上看到的域名和行业，排版评审时看得出长域名、中英混排的样子
   const REAL = [['higgsfield.ai', '计算机电子与技术'], ['elevenlabs.io', 'Programming and Developer Software'], ['topview.ai', 'Graphics Multimedia and Web Design'],
-    ['journaldesfemmes.fr', '未知'], ['playtennis.usta.com', 'Tennis'], [null], ['drmax.pl', 'Biotechnology and Pharmaceuticals'], [null],
+    ['pdf-merge-demo.vercel.app', 'Programming and Developer Software'], ['playtennis.usta.com', 'Tennis'], [null], ['drmax.pl', 'Biotechnology and Pharmaceuticals'], [null],
     ['gamebillet.com', 'Video Games Consoles and Accessories'], ['activities.bookpebble.co.uk', '未知'], ['evolink.ai', 'Programming and Developer Software'],
     ['yepbooking.com.au', 'Travel and Tourism'], ['mai-ko.com', '未知'], ['jpx-jquants.com', 'Finance'], ['app.mailerfind.com', 'Marketing and Advertising']];
   const rows = Array.from({ length: N }, (_, i) => ({
@@ -109,7 +109,12 @@
     if (path === '/normalize' && body.hosts?.some((x) => /^site\d+\.com$/.test(x.h))) {  // 只接找站那批（域名视图照旧走 stub.js）
       if (window.__serviceDown) throw new TypeError('Failed to fetch');
       const by = new Map();
-      for (const { h } of body.hosts) { const d = registrable(h); const it = by.get(d) || { domain: d, hosted: null, self: false, n: 0, via: ['link'], hosts: [] }; it.hosts.push(h); by.set(d, it); }
+      for (const { h } of body.hosts) {
+        const hosted = /\.vercel\.app$/.test(h);  // 托管子域：单独成键、不查注册日（同 server.py 的 classify）
+        const d = hosted ? h : registrable(h);
+        const it = by.get(d) || { domain: d, hosted: hosted ? 'vercel.app' : null, self: false, n: 0, via: ['link'], hosts: [] };
+        it.hosts.push(h); by.set(d, it);
+      }
       return { ok: true, status: 200, json: async () => ({ items: [...by.values()] }) };
     }
     if (path === '/lookup' && !body.domains.some((d) => d in CANNED.results)) {

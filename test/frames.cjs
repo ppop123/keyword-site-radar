@@ -69,6 +69,14 @@ const FRAMES = [
     await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done' && !!document.querySelector('#rlist .hrow'), null, 120000);
     await p.waitForTimeout(500);  // 等域龄最后一次就地刷新
   }],
+  ['8b-refs-young', async (p) => {
+    // 开着「1 年内注册」：看得到 1 年内的蓝色域龄胶囊（资深用户 10-12 要补的一帧）
+    await p.evaluate(() => window.__seedRefCache(31));
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done', null, 120000);
+    await p.click('[data-act=r-young]');
+    await p.waitForTimeout(300);
+  }],
   ['9-refs-error', async (p) => {
     await p.evaluate(() => { window.__refBroken = true; });
     await p.click('#tab-refs');

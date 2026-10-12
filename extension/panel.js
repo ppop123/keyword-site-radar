@@ -118,7 +118,7 @@ const ICON_TABLE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" 
 const NOT_SIM_CARD = `<div class="list"><section class="card"><h2>只在 sim.3ue.co 上用</h2>
   <p>这个视图读的是当前标签页里 sim.3ue.co 的页面，当前标签页不是 sim。</p>
   <a class="btn primary big ext" href="https://sim.3ue.co/">打开 sim.3ue.co</a>
-  <p class="sub">「找词」「找站」不用在 sim 上，可以直接用。</p></section></div>`;
+</section></div>`;
 
 function serviceDownCard(what) {
   return `<section class="card err"><h2>${ICON_ALERT}本机查询服务没有响应</h2>
@@ -172,15 +172,6 @@ function render() {
 }
 // 新的一轮 / 换了筛选：从顶上看起
 const scrollTop = (v) => { S.scroll[v] = 0; const l = view.querySelector('.list'); if (l && S.shown === v) l.scrollTop = 0; };
-
-// 当前标签页是 sim 关键词表、还没在它上面收集过：在别的视图顶上给一条「收集新进热词」
-function hotShortcut() {
-  const t = S.tab;
-  if (!isSim(t) || !isKeywordPage(t.url)) return '';
-  if (H.status === 'running') return '';  // 正在收集时点它会作废那一轮
-  if (H.status === 'done' && H.tabId === t.id && H.url && pageKey(H.url) === pageKey(t.url)) return '';  // 这张表刚收过
-  return `<div class="ctxnote act"><span>当前是 ${esc(simKey(t.url) || '这个域名')} 的关键词表</span><button class="link" type="button" data-act="go-hot">去收集新进热词 ›</button></div>`;
-}
 
 // ================= 域名注册时间 =================
 
@@ -324,8 +315,7 @@ function sortedDomains() {
 function renderDomains() {
   if (D.status === 'notsim' || (D.status === 'idle' && !isSim(S.tab))) { view.innerHTML = NOT_SIM_CARD; return; }
   if (D.status === 'idle') {
-    view.innerHTML = `<div class="list">${hotShortcut()}<section class="card"><h2>本页的域名，新注册的在前</h2>
-      <p>收集本页链接和正文里的所有域名（不含 3ue.co 和 similarweb.com），查注册日，从新到旧排。每次扫完存一份，下次自动标出「首次出现」。</p>
+    view.innerHTML = `<div class="list"><section class="card"><h2>本页的域名，新注册的在前</h2>
       <button class="btn primary big" type="button" data-act="scan">扫描本页域名</button></section></div>`;
     return;
   }
@@ -342,7 +332,7 @@ function renderDomains() {
   const errors = miss.filter((x) => D.results[x.domain].error).length;
   const otherTab = S.tab && D.tabId !== S.tab.id;
 
-  let html = '<div class="list">' + hotShortcut();
+  let html = '<div class="list">';
   if (otherTab) html += `<div class="ctxnote">下面是 ${esc(D.host)} 的结果${D.tabGone ? '（那个标签页已经关了）' : ''}。</div>`;
   html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${D.items.length}</span><span class="unit">个域名</span></div>
     <span class="btns"><button class="btn" type="button" data-act="dom-copy">复制域名表</button><button class="btn" type="button" data-act="scan">${otherTab ? '扫描当前页' : '重新扫描'}</button></span></div>`;
@@ -353,13 +343,13 @@ function renderDomains() {
     html += `<div class="diff"><span>对比</span><select aria-label="对比的那次扫描" data-act="dom-base">${D.bases.map((b) =>
       `<option value="${esc(b.id)}"${b.id === D.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
       <button class="fbtn" type="button" data-act="dom-filter" data-f="all" aria-pressed="${D.filter !== 'new'}">全部 ${D.items.length}</button>
-      <button class="fbtn new" type="button" data-act="dom-filter" data-f="new" aria-pressed="${D.filter === 'new'}"${dd.newCount ? '' : ' disabled'}>首次出现 ${dd.newCount}</button></div>`;
+      <button class="fbtn" type="button" data-act="dom-filter" data-f="new" aria-pressed="${D.filter === 'new'}"${dd.newCount ? '' : ' disabled'}>首次出现 ${dd.newCount}</button></div>`;
   } else if (D.items.length) {
-    html += '<div class="meta">第一次扫这一页，已存下来；下次再扫会标出首次出现。</div>';
+
   }
   html += '</section>';
 
-  html += `<div class="sticky"><div class="colhead"><span class="c-kw">域名 → 新进关键词</span><span class="c-reg">注册日</span><span class="c-age">域龄</span></div></div>`;
+  html += `<div class="sticky"><div class="colhead"><span class="c-kw">域名</span><span class="c-reg">注册日</span><span class="c-age">域龄</span></div></div>`;
   const onlyNew = D.filter === 'new';  // 「只看首次出现」
   const show = (x) => !onlyNew || dd.isNew(x.domain);
   // 一行一个标记，字和筛选按钮对得上：从没见过的一定也是这页首次出现，写成「首次出现 · 从没见过」
@@ -375,16 +365,12 @@ function renderDomains() {
     const r = D.results[x.domain];
     if (!r) html += `<div class="drow">${name(x)}<span class="c-miss">查询中…</span></div>`;
     else if (!r.reg) html += `<div class="drow">${name(x)}<span class="c-miss" title="${esc(r.source)}">${r.error ? '出错' : '查不到 · 注册局不公开'}</span></div>`;
-    else {
-      const m = ageMonths(r.reg);
-      const cls = m < 12 ? 'fresh' : m < 24 ? 'mid' : 'old';
-      html += `<div class="drow">${name(x)}<span class="c-reg" title="来源：${esc(r.source)}">${esc(r.reg)}</span><span class="c-age"><span class="age ${cls}">${ageText(r.reg)}</span></span></div>`;
-    }
+    else html += `<div class="drow">${name(x)}<span class="c-reg" title="来源：${esc(r.source)}">${esc(r.reg)}</span><span class="c-age">${ageText(r.reg)}</span></div>`;
   }
   if (!rows.length) html += '<div class="empty">没有符合筛选的域名。</div>';
   const hostedShown = hosted.filter(show);
   if (hostedShown.length) {
-    html += `<div class="group">托管子域 ${hostedShown.length} 个（平台的注册日没有参考价值，不查）</div>`;
+    html += `<div class="group">托管子域 ${hostedShown.length} 个（不查注册日）</div>`;
     for (const x of hostedShown) html += `<div class="drow">${name(x)}<span class="c-miss">${esc(x.hosted)}</span></div>`;
   }
   if (dd.gone.length) {
@@ -609,16 +595,23 @@ const fmtRatio = (x) => `${x.ge ? '≥' : ''}${x.ratio >= 100 ? Math.round(x.rat
 function topHost(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
+// 太长就省中间、留后缀：「my-very-long….vercel.app」——靠 .vercel.app 这种后缀一眼认出托管小站（资深用户 10-12）
+function shortHost(host) {
+  if (host.length <= 22) return host;
+  const parts = host.split('.');
+  const tail = '.' + parts.slice(-2).join('.');
+  return parts.length > 2 ? host.slice(0, Math.max(4, 21 - tail.length)) + '…' + tail : host;
+}
 
 // 一行一个词：关键词、Trends、首次出现排在一起（放不下才折行），数字列对齐第一行；
 // 热门网址的站放在数字列下面（关键词本来就两行时不加高，跟在 Trends 后面会多出一行）
 function hotRow(x, order, chg, filter) {
   const badge = chg.get(x.kw) && filter !== 'first' ? '<span class="badge new" title="上次查询的名单里没有">首次出现</span>' : '';
   const host = topHost(x.url);
-  const top = host ? `<a class="ext topurl" href="${esc(domainUrl(host))}" title="热门网址：${esc(x.url)}\n点开看 ${esc(host)} 的新进关键词">${esc(host)}</a>` : '';
+  const top = host ? `<a class="ext topurl" href="${esc(domainUrl(host))}" title="热门网址：${esc(x.url)}\n点开看 ${esc(host)} 的新进关键词">${esc(shortHost(host))}</a>` : '';
   return `<div class="hrow"><span class="c-rank">${order}</span>
     <div class="kwcell"><a class="ext kw" href="${esc(kwUrl(x.kw))}" title="${esc(x.kw)}（表里第 ${x.rank} 名）">${esc(x.kw)}</a>
-      <a class="ext trends" href="${esc(trendsUrl(x.kw))}" title="Google Trends 近 1 个月，和 ${TRENDS_BASE} 对比">Trends</a>${badge}</div>
+      <a class="ext trends" href="${esc(trendsUrl(x.kw))}" title="Google Trends 近 1 个月，和 ${TRENDS_BASE} 对比">Trends</a> ${badge}</div>
     <div class="nums"><div class="numrow"><span class="c-num">${esc(x.t)}</span><span class="c-num dim">${esc(x.v)}</span>
       <span class="c-ratio"><span class="ratio ${x.red ? 'red' : 'orange'}">${fmtRatio(x)}</span></span></div>${top}</div></div>`;
 }
@@ -626,8 +619,7 @@ function hotRow(x, order, chg, filter) {
 const COLHEAD = (label) => `<div class="sticky"><div class="colhead"><span class="c-rank">#</span><span class="c-kw">${label}</span><span class="c-num">28 天</span><span class="c-num">平均</span><span class="c-ratio" title="${RULE}">倍数</span></div></div>`;
 // 规则 + 红橙各几条，收集前后都是这一行
 const RULE = 'KD=0 · 倍数 = 28 天流量 ÷ 平均体量';
-const tierLine = (reds, oranges, note = RULE) => `<div class="tiers"><span class="ratio red" title="${RULE}，倍数 &gt; 20">&gt;20×${reds == null ? '' : ` ${reds}`}</span>` +
-  `<span class="ratio orange" title="${RULE}，倍数 &gt; 5">&gt;5×${oranges == null ? '' : ` ${oranges}`}</span><span class="rule">${note}</span></div>`;
+const tierText = (reds, oranges) => `红 ${reds} · 橙 ${oranges}`;
 const pagesText = (done, total) => (total && total <= PAGE_CAP ? `第 ${done} / ${total} 页` : `第 ${done} / ${PAGE_CAP} 页（共 ${total ?? '…'}）`);
 
 function renderHot() {
@@ -645,7 +637,6 @@ function renderHot() {
     const p = H.prevInfo;
     const prev = p ? `${esc(p.day.slice(5))}（${esc(dayLabel(p).split(' · ')[1])}），收完自动对比` : '没有，这次收完存下来，下次就能比';
     view.innerHTML = `<div class="list"><section class="card"><h2>按当前排序取前 ${TARGET} 条热词</h2>
-      ${tierLine()}
       <dl><dt>当前排序</dt><dd>${esc(H.sort || '页面默认')}</dd><dt>上次查</dt><dd>${prev}</dd></dl>
       <button class="btn primary big" type="button" data-act="collect">收集前 ${TARGET} 条热词</button></section></div>`;
     return;
@@ -663,8 +654,7 @@ function renderHot() {
     html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${items.length}</span><span class="unit">/ ${TARGET} 条热词</span></div>
       <button class="btn" type="button" data-act="stop"${H.stopReq ? ' disabled' : ''}>${H.stopReq ? '正在停止' : '停止'}</button></div>
       <div class="bar"><i style="width:${Math.min(100, items.length / TARGET * 100).toFixed(1)}%"></i></div>
-      ${tierLine(reds, items.length - reds, `${pageText} · 按「${esc(H.sort || '页面默认排序')}」`)}
-      <div class="meta">收集时侧边栏要开着；请别手动翻那张表。</div></section>`;
+      <div class="meta">${pageText} · 按「${esc(H.sort || '页面默认排序')}」 · ${tierText(reds, items.length - reds)}</div></section>`;
   } else {
     // 只有不正常的结束才挂标签；取满是常态，不说
     const head = { end: '整张表翻完了', cap: `不足 ${TARGET}`, stopped: '已停止', error: '中途出错' }[H.reason] || '';
@@ -673,32 +663,31 @@ function renderHot() {
       ? '<button class="btn outline" type="button" data-act="resume">继续收集</button>'
       : H.reason === 'cap' ? `<button class="btn outline" type="button" data-act="resume">再翻 ${PAGE_CAP} 页</button>` : '';
     const exp = items.length ? '<button class="btn" type="button" data-act="export" title="按收集顺序，含热门网址；有对比时带变化列">导出 CSV</button>' : '';
-    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${items.length}</span><span class="unit">条热词</span>${head ? `<span class="chip">${head}</span>` : ''}</div>
+    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${items.length}</span><span class="unit">条热词${head ? ` · ${head}` : ''}</span></div>
       <span class="btns">${more}${exp}${restart}</span></div>
-      ${tierLine(reds, items.length - reds, `按「${esc(H.sort || '页面默认排序')}」${H.reason === 'end' ? ` · 共 ${H.lastPage} 页` : ''}`)}
+      <div class="meta">按「${esc(H.sort || '页面默认排序')}」${H.reason === 'end' ? ` · 共 ${H.lastPage} 页` : ''} · ${tierText(reds, items.length - reds)}</div>
       ${!H.tabGone && H.returnFailed ? `<div class="meta"><b>没能自动回到第 ${H.startPage} 页</b></div>` : ''}`;
     if (H.reason === 'cap') html += `<div class="meta">已翻 ${H.runPages} 页仍不足 ${TARGET} 条，先停在这里。</div>`;
-    if (H.reason === 'stopped') html += `<div class="meta">${H.cleared ? '已清除表格上的框。' : ''}没收完的结果不和上次比，也不存成下次对比的基线。</div>`;
+    if (H.reason === 'stopped') html += '<div class="meta">没收完，不和上次比，也不存。</div>';
     if (H.reason === 'error') html += `<div class="meta">出错：${esc(H.err?.message)}。已收的保留，可以接着收。</div>`;
     if (H.err && H.reason !== 'error') html += `<div class="meta">${esc(H.err.message)}</div>`;
     if (compared(H)) {
-      const f = (k, label, n) => `<button class="fbtn${k === 'first' ? ' new' : ''}" type="button" data-act="hot-filter" data-f="${k}" aria-pressed="${H.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
+      const f = (k, label, n) => `<button class="fbtn" type="button" data-act="hot-filter" data-f="${k}" aria-pressed="${H.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
       html += `<div class="diff"><span>对比</span><select aria-label="对比的那次查询" data-act="hot-base">${H.bases.map((b) =>
         `<option value="${esc(b.id)}"${b.id === H.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
         ${f('all', '全部', items.length)}${f('first', '首次出现', d.counts.first)}</div>`;
     } else if (['full', 'end', 'cap'].includes(H.reason)) {
       const other = H.others?.[0];
-      html += `<div class="meta">第一次查这张表，已存下来；下次再查会标出首次出现。${other
+      if (other) html += `<div class="meta">${other
         ? `另有 ${esc(dayLabel(other))} 的快照，但那次按「${esc(other.label)}」排序，不能比。` : ''}</div>`;
     }
-    if (!H.cleared && !H.tabGone) html += '<button class="link self-start" type="button" data-act="clear">清除表格上的红橙框</button>';
     html += '</section>';
   }
 
   const filter = compared(H) ? H.filter : 'all';
   const orderOf = new Map(items.map((x, i) => [x.kw, i + 1]));  // 名次 = 收集后的顺序
   const shown = filter === 'first' ? items.filter((x) => d.chg.has(x.kw)) : items;
-  html += COLHEAD(filter === 'first' ? '关键词 → SERP · 只看首次出现' : '关键词 → SERP');
+  html += COLHEAD(filter === 'first' ? '关键词 · 只看首次出现' : '关键词');
   html += shown.map((x) => hotRow(x, orderOf.get(x.kw), d.chg, filter)).join('') || `<div class="empty">${H.status === 'running' ? '还没收到符合规则的词…' : '没有符合筛选的词。'}</div>`;
   if (d.gone.length) {
     html += foldRow('hot-gone', H.goneOpen, `消失 ${d.gone.length} 个：上次在名单里，这次不在或没过线`);
@@ -726,26 +715,6 @@ function exportHot() {
   for (const g of d.gone) lines.push([csvCell(''), csvCell('消失'), csvCell(''), csvCell(g.order), csvCell(''), csvCell(g.kw, true), ...Array(blank).fill(csvCell(''))].join(','));
   download(`新进热词_${(job.host || 'sim').replace(/[^\w.-]/g, '_')}_${today()}.csv`, lines);
 }
-
-async function clearHot() {
-  const job = H;
-  const wasRunning = job.status === 'running';
-  if (wasRunning) {
-    job.loop++;  // 让正在跑的那一轮作废：不再翻页、不存、不画
-    Object.assign(job, { status: 'done', reason: 'stopped' });
-  }
-  job.stopReq = true;
-  job.cleared = true;
-  render();
-  if (job.tabId == null) return;
-  await pageCall(job.tabId, 'stop').catch(() => {});
-  if (wasRunning && job.startPage) {  // 作废的那一轮不会自己翻回去，这里替它回到用户原来那一页
-    const back = await withTimeout(pageCall(job.tabId, 'goto', job.startPage).catch(() => false), PAGE_TIMEOUT);
-    job.returnFailed = !back;
-    if (H === job) render();
-  }
-}
-
 
 // ================= 找词：web.cafe 新词发现服务的基础词 =================
 // 取「长期大词」整页（602 个，含老词 / 无标签 / 二次爆火 / 新词标签）和「二次爆火」两组（用户 10-12 定），
@@ -889,8 +858,7 @@ function renderWords() {
   if (W.status === 'idle') { view.innerHTML = ''; loadWords(); return; }
   if (W.status === 'loading') {
     view.innerHTML = `<div class="list"><section class="status"><div class="stat-row"><div class="stat"><span class="unit">正在从 web.cafe 拉取长期大词和二次爆火…</span></div></div>
-      <div class="bar indet"><i></i></div>
-      <div class="meta">两组共 30 多页，大约半分钟。用的是你在 Chrome 里的 web.cafe 登录。</div></section></div>`;
+</section></div>`;
     return;
   }
   if (W.status === 'login' || (W.status === 'error' && !W.items.length)) {
@@ -903,15 +871,15 @@ function renderWords() {
   const cnt = (f) => W.items.filter(f).length;
   const chip = (act, k, label, n, cur) => `<button class="fbtn" type="button" data-act="${act}" data-f="${esc(k)}" aria-pressed="${cur === k}">${esc(label)} ${n}</button>`;
   const ev = W.meta?.evergreen?.found, rs = W.meta?.resurgence?.found;
-  view.innerHTML = `<div class="list">${hotShortcut()}<section class="status"><div class="stat-row"><div class="stat"><span class="big">${W.items.length}</span><span class="unit">个基础词</span>
-      <span class="chip" title="web.cafe 新词发现：长期大词 ${esc(ev ?? '—')} · 二次爆火 ${esc(rs ?? '—')}，两组都有的算一个">web.cafe</span></div>
+  view.innerHTML = `<div class="list"><section class="status"><div class="stat-row"><div class="stat"><span class="big">${W.items.length}</span><span class="unit">个基础词</span>
+</div>
       <button class="btn" type="button" data-act="w-refresh">重新拉取</button></div>
-    <div class="meta">${fmtTime(W.at)} 拉取 · 12 小时内不重拉${W.err ? ` · 重新拉取失败：${esc(W.err.message)}` : ''}</div>
+    <div class="meta">web.cafe · ${fmtTime(W.at)} 拉取${W.err ? ` · 重新拉取失败：${esc(W.err.message)}` : ''}</div>
     <div class="frow"><span class="lbl">方向</span><div class="chips">${chip('w-dir', 'all', '全部', W.items.length, W.dir)}${WC_DIRS.map((d) => chip('w-dir', d, d, cnt((w) => w.dir === d), W.dir)).join('')}</div></div>
     <div class="frow"><span class="lbl">分组</span><div class="chips">${chip('w-group', 'all', '全部', W.items.length, W.group)}${Object.values(WC_TABS).map((g) => chip('w-group', g, g, cnt((w) => w.groups.includes(g)), W.group)).join('')}</div></div>
     </section>
     <div class="sticky"><div class="toolbar"><input class="search" type="search" placeholder="搜词或标签，比如 pdf、上升中" value="${esc(W.q)}" aria-label="搜词或标签" data-act="w-search"></div>
-    <div class="colhead"><span class="c-rank">#</span><span class="c-kw">关键词 → SERP · <span id="wcount"></span></span><span class="c-gpts">热度÷gpts</span></div></div>
+    <div class="colhead"><span class="c-rank">#</span><span class="c-kw">关键词 · <span id="wcount"></span></span><span class="c-gpts">热度÷gpts</span></div></div>
     <div id="wlist"></div></div>`;
   renderWordList();
 }
@@ -1168,9 +1136,7 @@ function agePill(x) {
   if (m.hosted) return `<span class="tag" title="托管在 ${esc(m.hosted)} 上，平台的注册日没有参考价值">托管</span>`;
   const r = R.reg[m.d];
   if (!r?.reg) return '';
-  const months = ageMonths(r.reg);
-  const cls = months < 12 ? 'fresh' : months < 24 ? 'mid' : 'old';
-  return `<span class="age ${cls}" title="${esc(m.d)} 注册于 ${esc(r.reg)}（${esc(r.source)}）">${ageText(r.reg)}</span>`;
+  return `<span class="age" title="${esc(m.d)} 注册于 ${esc(r.reg)}（${esc(r.source)}）">${ageText(r.reg)}</span>`;
 }
 
 async function lookupRefAges() {
@@ -1299,8 +1265,7 @@ function renderRefs() {
   // 同一个侧边栏开着跨过了 30 天：照样自动更新一次
   if (R.status === 'done' && refDue(R.at) && R.autoTriedFor !== R.at && !refJob) setTimeout(() => loadRefs(), 0);
   if (R.status === 'done' && R.regFor !== R.at) setTimeout(() => lookupRefAges(), 0);
-  // 出错、加载、停止时只留一个主动作：不放快捷条
-  const top = '<div class="list">' + (R.status === 'done' ? hotShortcut() : '');
+  const top = '<div class="list">';
   if (R.status === 'stopped') {
     view.innerHTML = `${top}<section class="card"><h2>已停止</h2><p>还没有存下来的 Stripe 引荐网站。</p>
       <button class="btn primary big" type="button" data-act="r-refresh">重新拉取</button></section></div>`;
@@ -1318,10 +1283,10 @@ function renderRefs() {
     const pct = R.pages ? Math.round((R.page / R.pages) * 100) : 0;
     const where = R.stopping ? '正在停止…' : R.page ? `第 ${R.page} / ${R.pages} 页`
       : R.made ? '在后台开了一个 sim 引荐页，等表格出来…' : '等引荐页上的表格出来…';
-    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.got}</span><span class="unit">个站</span><span class="chip" title="${esc(REF_ABOUT)}">Stripe 引荐</span></div>
+    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.got}</span><span class="unit">个站</span></div>
       <button class="btn" type="button" data-act="r-stop"${R.stopping || refJob?.committing ? ' disabled' : ''}>${R.stopping ? '正在停止' : refJob?.committing ? '正在保存' : '停止'}</button></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="meta">${where} · 约半分钟${R.items.length ? ' · 下面先显示上一份' : ''}</div></section>`;
+      <div class="meta">${where}</div></section>`;
     if (!R.items.length) { view.innerHTML = html + '</div>'; return; }
   }
   const inds = new Map();
@@ -1330,22 +1295,22 @@ function renderRefs() {
   const opts = ['<option value="all">全部行业</option>',
     ...[...inds].sort((a, b) => b[1] - a[1]).map(([k, n]) => `<option value="${esc(k)}"${R.ind === k ? ' selected' : ''}>${esc(k)} ${n}</option>`)].join('');
   const newN = R.prev ? R.items.filter(refIsNew).length : 0;
-  const chip = (k, label, n) => `<button class="fbtn${k === 'new' ? ' new' : ''}" type="button" data-act="r-filter" data-f="${k}" aria-pressed="${R.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
+  const chip = (k, label, n) => `<button class="fbtn" type="button" data-act="r-filter" data-f="${k}" aria-pressed="${R.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
   const md = (t) => new Date(t).toLocaleDateString('sv').slice(5);
   if (R.status !== 'loading') {
     html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.items.length}</span><span class="unit">个站</span></div>
         <span class="btns"><button class="btn" type="button" data-act="r-copy" title="复制下面正显示的这些站（按当前筛选），粘到表格里一行一个">复制</button>
         <button class="btn" type="button" data-act="r-refresh" title="满 30 天自动重拉；点这里马上重拉">重新拉取</button></span></div>
-      <div class="meta"><span class="about" title="${esc(REF_ABOUT)}">Stripe 引荐</span> · ${md(R.at)} 拉取 · ${refDue(R.at) ? '已满 30 天，下次打开侧边栏时再自动试' : `${md(R.at + REF_TTL)} 自动更新`}${R.short ? ` · ${esc(R.short)}` : ''}${R.err ? ` · 更新失败：${esc(R.err.message)}` : ''}</div>
-      ${R.prev ? `<div class="diff"><span>比 ${md(R.prev.at)}</span>${chip('all', '全部', R.items.length)}${chip('new', '首次出现', newN)}</div>`
-        : '<div class="meta">这是第一份；30 天后更新时会标出首次出现的站。</div>'}
-      <div class="diff"><span>域龄</span><button class="fbtn" type="button" data-act="r-young" aria-pressed="${!!R.young}" title="域名注册不到 1 年（本机服务查的注册日）">1 年内注册 ${R.items.filter(refYoung).length}</button>
+      <div class="meta" title="${esc(REF_ABOUT)}">Stripe 引荐 · ${md(R.at)} 拉取 · ${refDue(R.at) ? '已满 30 天，下次打开侧边栏时再自动试' : `${md(R.at + REF_TTL)} 自动更新`}${R.short ? ` · ${esc(R.short)}` : ''}${R.err ? ` · 更新失败：${esc(R.err.message)}` : ''}</div>
+      ${R.prev ? `<div class="diff"><span class="lbl">比 ${md(R.prev.at)}</span>${chip('all', '全部', R.items.length)}${chip('new', '首次出现', newN)}</div>`
+        : ''}
+      <div class="diff"><span class="lbl">域龄</span><button class="fbtn" type="button" data-act="r-young" aria-pressed="${!!R.young}" title="域名注册不到 1 年（本机服务查的注册日）">1 年内注册 ${R.items.filter(refYoung).length}</button>
         <span id="rregs">${esc(refRegText())}</span></div>
       </section>`;
   }
   html += `<div class="sticky"><div class="toolbar two"><input class="search" type="search" placeholder="搜域名或行业" value="${esc(R.q)}" aria-label="搜域名或行业" data-act="r-search">
       <select class="sel" data-act="r-ind" aria-label="按行业筛选">${opts}</select></div>
-    <div class="colhead"><span class="c-rank">#</span><span class="c-kw">网站 → 新进关键词 · <span id="rcount"></span></span><span class="c-share">占 Stripe 引荐</span></div></div>
+    <div class="colhead"><span class="c-rank">#</span><span class="c-kw">网站 · <span id="rcount"></span></span><span class="c-share">占 Stripe 引荐</span></div></div>
     <div id="rlist"></div></div>`;
   view.innerHTML = html;
   renderRefList();
@@ -1384,7 +1349,6 @@ view.addEventListener('click', async (ev) => {
   else if (act === 'dom-gone') { D.goneOpen = !D.goneOpen; render(); }
   else if (act === 'dom-copy') copyDomains(el);
   else if (act === 'go-domains') setView('domains');
-  else if (act === 'go-hot') { if (H.status !== 'done') probeHot(); setView('hot'); }  // 和点页签一样：先看收集前的卡片
   else if (act === 'collect') runCollect({ resume: false });
   else if (act === 'resume') runCollect({ resume: true });
   else if (act === 'stop') { H.stopReq = true; render(); }
@@ -1394,7 +1358,6 @@ view.addEventListener('click', async (ev) => {
   else if (act === 'w-refresh') loadWords({ force: true });
   else if (act === 'w-dir') { W.dir = el.dataset.f; scrollTop('words'); render(); }
   else if (act === 'w-group') { W.group = el.dataset.f; scrollTop('words'); render(); }
-  else if (act === 'clear') clearHot();
   else if (act === 'r-refresh') loadRefs({ force: true });
   else if (act === 'r-stop') stopRefs();
   else if (act === 'r-filter') { R.filter = el.dataset.f; scrollTop('refs'); render(); }
