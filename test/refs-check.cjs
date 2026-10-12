@@ -286,6 +286,31 @@ const CASES = {
     const r = await p.evaluate(() => ({ value: document.querySelector('[data-act=n-input]').value, q: N.q }));
     return [r.value === 'merge pdf' && r.q === 'pdf to jpg', r];
   },
+  async '固化数据：本地没有时找站直接用项目里带的那份，不去拉'(p) {
+    await p.evaluate(() => { window.__useSeed = true; });
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob);
+    const s = await state(p);
+    const rows = await p.evaluate(() => document.querySelectorAll('#rlist .hrow').length);
+    return [s.n === 973 && s.saved === 973, s.created.length === 0, rows === 973, { ...s, rows }];
+  },
+  async '固化数据：本地没有时找词先用项目里带的那份'(p) {
+    await p.evaluate(() => { window.__useSeed = true; window.__wcLoggedOut = true; });
+    await p.click('#tab-words');
+    await until(p, () => W.items.length > 0 && !W.refreshing && W.status === 'done');
+    const r = await p.evaluate(() => ({ n: W.items.length, rows: document.querySelectorAll('#wlist .hrow').length, stored: window.__wcStore['webcafe-v2']?.items?.length, card: !!document.querySelector('.card.err') }));
+    return [r.n === 923 && r.stored === 923 && r.rows > 0 && !r.card, r];
+  },
+  async '找词缓存过期又没登录：旧词照样显示，灰字写更新失败'(p) {
+    await p.evaluate(() => {
+      window.__wcLoggedOut = true;
+      window.__wcStore['webcafe-v2'] = { items: [{ kw: 'old word', dir: 'AI', groups: ['长期大词'], tags: [], verdict: '', gpts: 9, desc: '', slug: '/keywords/old-word' }], meta: {}, at: Date.now() - 13 * 3600000 };
+    });
+    await p.click('#tab-words');
+    await until(p, () => W.items.length > 0 && !W.refreshing);
+    const r = await p.evaluate(() => ({ rows: document.querySelectorAll('#wlist .hrow').length, meta: document.querySelector('.status .meta')?.textContent || '', card: !!document.querySelector('.card.err') }));
+    return [r.rows === 1 && /更新失败/.test(r.meta) && !r.card, r];
+  },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {
     await p.evaluate(() => window.__seedRefCache(5));
     await p.click('#tab-refs');

@@ -801,26 +801,40 @@ function mergeWords(raw) {
   return [...by.values()].sort((a, b) => (b.gpts ?? -1) - (a.gpts ?? -1));
 }
 
+// 项目里带的一份数据（extension/seed/，用 tools/export-seed.py 从插件存储导出）：本地还没有时先用它，第一次打开也有数据（用户 10-12 要的）
+async function seedData(name) {
+  try { return await (await fetch(chrome.runtime.getURL(`seed/${name}`))).json(); } catch { return null; }
+}
+
 async function loadWords({ force = false } = {}) {
-  if (W.status === 'loading') return;
-  if (!force) {
-    const webcafe = (await chrome.storage.local.get(WC_CACHE).catch(() => ({})))[WC_CACHE];
-    if (webcafe?.items?.length && Date.now() - webcafe.at < WC_TTL) {
-      Object.assign(W, { status: 'done', items: webcafe.items, meta: webcafe.meta, at: webcafe.at });
-      return render();
+  if (W.status === 'loading' || W.refreshing) return;
+  // 先拿手上有的：存着的那份，没有就用项目里带的那份
+  if (!W.items.length) {
+    let c = (await chrome.storage.local.get(WC_CACHE).catch(() => ({})))[WC_CACHE];
+    if (!c?.items?.length) {
+      c = await seedData('webcafe.json');
+      if (c?.items?.length) chrome.storage.local.set({ [WC_CACHE]: c }).catch(() => {});
     }
+    if (c?.items?.length) Object.assign(W, { status: 'done', items: c.items, meta: c.meta, at: c.at });
   }
-  Object.assign(W, { status: 'loading', err: null });
+  if (!force && W.items.length && Date.now() - W.at < WC_TTL) return render();
+  // 手上有词就边看边在后台更新，更新失败也照样用这份；一个词都没有才显示「正在拉取」
+  if (W.items.length) Object.assign(W, { refreshing: true, err: null });
+  else Object.assign(W, { status: 'loading', err: null });
   render();
   try {
     const r = await fetchWebcafe();
-    if (!r?.items?.length) { W.status = 'login'; return render(); }
-    const items = mergeWords(r.items);
-    Object.assign(W, { status: 'done', items, meta: r.meta, at: Date.now() });
-    chrome.storage.local.set({ [WC_CACHE]: { items, meta: r.meta, at: W.at } }).catch(() => {});
+    if (r?.items?.length) {
+      const items = mergeWords(r.items);
+      Object.assign(W, { status: 'done', items, meta: r.meta, at: Date.now() });
+      chrome.storage.local.set({ [WC_CACHE]: { items, meta: r.meta, at: W.at } }).catch(() => {});
+    } else if (W.items.length) W.err = new Error('没登录 web.cafe');
+    else W.status = 'login';
   } catch (e) {
-    Object.assign(W, { status: 'error', err: e });
+    if (W.items.length) W.err = e;
+    else Object.assign(W, { status: 'error', err: e });
   }
+  W.refreshing = false;
   render();
 }
 
@@ -872,8 +886,8 @@ function renderWords() {
   const chip = (act, k, label, n, cur) => `<button class="fbtn" type="button" data-act="${act}" data-f="${esc(k)}" aria-pressed="${cur === k}">${esc(label)} ${n}</button>`;
   view.innerHTML = `<div class="list"><section class="status"><div class="stat-row"><div class="stat"><span class="big">${W.items.length}</span><span class="unit">个基础词</span>
 </div>
-      <button class="btn" type="button" data-act="w-refresh">重新拉取</button></div>
-    <div class="meta">web.cafe · ${fmtTime(W.at)} 拉取${W.err ? ` · 重新拉取失败：${esc(W.err.message)}` : ''}</div>
+      <button class="btn" type="button" data-act="w-refresh"${W.refreshing ? ' disabled' : ''}>${W.refreshing ? '正在更新' : '重新拉取'}</button></div>
+    <div class="meta">web.cafe · ${fmtTime(W.at)} 拉取${W.refreshing ? ' · 正在更新…' : ''}${W.err ? ` · 更新失败：${esc(W.err.message)}` : ''}</div>
     <div class="frow"><span class="lbl">方向</span><div class="chips">${chip('w-dir', 'all', '全部', W.items.length, W.dir)}${WC_DIRS.map((d) => chip('w-dir', d, d, cnt((w) => w.dir === d), W.dir)).join('')}</div></div>
     <div class="frow"><span class="lbl">分组</span><div class="chips">${chip('w-group', 'all', '全部', W.items.length, W.group)}${Object.values(WC_TABS).map((g) => chip('w-group', g, g, cnt((w) => w.groups.includes(g)), W.group)).join('')}</div></div>
     </section>
@@ -1008,7 +1022,11 @@ async function loadRefs({ force = false } = {}) {
   try {
     if (prevJob) await prevJob.finished;  // 被停掉的上一轮先收拾完
     if (!alive()) return;
-    const cache = await refCache();
+    let cache = await refCache();
+    if (!cache?.items?.length) {  // 本地还没有：用项目里带的那份，当成存着的那份（30 天从它的拉取时间算）
+      const seed = await seedData('stripe-ref.json');
+      if (seed?.items?.length) { cache = seed; await chrome.storage.local.set({ [REF_CACHE]: seed }).catch(() => {}); }
+    }
     if (!alive()) return;
     const has = !!cache?.items?.length;
     if (has) Object.assign(R, refFrom(cache));

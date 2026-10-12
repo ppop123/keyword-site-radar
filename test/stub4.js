@@ -93,6 +93,10 @@
     return [{ result }];
   };
   window.__refLoad = load;
+  // 项目里带的那份数据（extension/seed/）：默认不给（测试从「本地没有」开始），__useSeed=true 才给
+  const nativeFetch = (() => { const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f); return f.contentWindow.fetch.bind(f.contentWindow); })();
+  window.__useSeed = false;
+  chrome.runtime.getURL = (p) => (window.__useSeed ? new URL('../extension/' + p, location.href).href : 'about:noseed/' + p);
   // 本机服务在找站这边的两个接口：/normalize 把主机名归到可注册域名（够用的简化版公共后缀），
   // /lookup 给确定的假注册日；cachedOnly 只回一半（假装另一半还没查过），没查过的单个查要 20ms
   const hash = (t) => [...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
@@ -104,6 +108,7 @@
   window.__lookups = { cachedOnly: 0, single: 0 };
   const prevFetch = window.fetch;
   window.fetch = async (u, opts) => {
+    if (typeof u === 'string' && u.includes('/extension/seed/')) return nativeFetch(u);
     const path = new URL(u, location.href).pathname;
     const body = opts?.body ? JSON.parse(opts.body) : {};
     if (path === '/normalize' && body.hosts?.some((x) => /^site\d+\.com$/.test(x.h))) {  // 只接找站那批（域名视图照旧走 stub.js）
