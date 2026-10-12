@@ -1343,9 +1343,9 @@ function renderRefs() {
 
 // ================= 查域名：一个关键词的各种组合 × 常用后缀，注册了没有、哪天注册的 =================
 // 用户 10-12 要的：给一个关键词，查它合理组合在 .com .net .org .ai .io .app .video 下的注册情况，
-// 完整域名 + 注册时间，从近到远排。复用本机服务的 RDAP → whois；查「能不能注册」不用 3 天内的「没有」缓存（recheck）
+// 完整域名 + 注册时间，从近到远排（后来又加了 .wiki）。复用本机服务的 RDAP → whois；查「能不能注册」不用 3 天内的「没有」缓存（recheck）
 
-const NAME_TLDS = ['com', 'net', 'org', 'ai', 'io', 'app', 'video'];
+const NAME_TLDS = ['com', 'net', 'org', 'ai', 'io', 'app', 'video', 'wiki'];  // wiki：用户 10-12 加
 const NAME_STOP = new Set(['to', 'for', 'and', 'the', 'a', 'an', 'of', 'in', 'on', 'with', 'by', 'at', 'my', 'your']);
 const N = { q: '', draft: '', status: 'idle', forms: [], rows: [], done: 0, run: 0 };
 

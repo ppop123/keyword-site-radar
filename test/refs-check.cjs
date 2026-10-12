@@ -198,7 +198,7 @@ const CASES = {
       (keyOf(x.href) === x.t || (x.t.includes('…') && keyOf(x.href).startsWith(x.t.split('…')[0]) && keyOf(x.href).endsWith(x.t.split('…')[1]))));
     return [okText, okHref, okIcon, r];
   },
-  async '查域名：组合 × 7 个后缀，注册日从近到远、没注册的放最后'(p) {
+  async '查域名：组合 × 8 个后缀，注册日从近到远、没注册的放最后'(p) {
     const forms = await p.evaluate(() => ({ multi: nameForms('PDF to JPG'), one: nameForms('jpg'), dom: nameForms('pdftojpg.com'),
       accent: nameForms('café menu'), cjk: nameForms('图片转pdf'), forx: nameForms('tools for seo') }));
     await p.click('#tab-names');
@@ -215,7 +215,7 @@ const CASES = {
     const okForms = JSON.stringify(forms.multi) === '["pdftojpg","pdf-to-jpg","pdfjpg","pdf-jpg","pdf2jpg"]' && JSON.stringify(forms.one) === '["jpg"]' &&
       JSON.stringify(forms.dom) === '["pdftojpg"]' && JSON.stringify(forms.accent) === '["cafemenu","cafe-menu"]' && forms.cjk.length === 0 &&
       JSON.stringify(forms.forx) === '["toolsforseo","tools-for-seo","toolsseo","tools-seo","tools4seo"]';
-    return [okForms, r.n === 35 && r.tlds.split(',').sort().join(',') === 'ai,app,com,io,net,org,video', r.sorted && r.freeLast && r.free > 0, { forms, ...r }];
+    return [okForms, r.n === 40 && r.tlds.split(',').sort().join(',') === 'ai,app,com,io,net,org,video,wiki', r.sorted && r.freeLast && r.free > 0, { forms, ...r }];
   },
   async '四轮#5/#6 服务没开 → 开了以后补查；查失败的下一轮重查'(p) {
     await p.evaluate(() => { window.__serviceDown = true; });
