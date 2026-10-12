@@ -140,3 +140,7 @@ npm test
 | `test/` | 测试页、假接口、场景测试、截图脚本 |
 | `design/` | 图标的生成脚本和素材、历次界面截图 |
 | `docs/DEVLOG.md` | 开发记录：每次改动的决定、Codex 审查结果和验证数据 |
+
+## 许可证
+
+代码按 [MIT 许可证](LICENSE) 开源。`extension/seed/` 里的数据来自 web.cafe 和 Similarweb，不在 MIT 授权范围内，归原网站所有。

@@ -2,6 +2,7 @@
   "name": "keyword-site-radar",
   "private": true,
   "description": "新词新站点点通：sim.3ue.co 上找新词新站的 Chrome 侧边栏插件（测试用的依赖）",
+  "license": "MIT",
   "scripts": {
     "test": "node test/refs-check.cjs",
     "frames": "node test/frames.cjs"
