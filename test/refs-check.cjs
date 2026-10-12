@@ -212,6 +212,56 @@ const CASES = {
       JSON.stringify(forms.forx) === '["toolsforseo","tools-for-seo","toolsseo","tools-seo","tools4seo"]';
     return [okForms, r.n === 35 && r.tlds.split(',').sort().join(',') === 'ai,app,com,io,net,org,video', r.sorted && r.freeLast && r.free > 0, { forms, ...r }];
   },
+  async '四轮#5/#6 服务没开 → 开了以后补查；查失败的下一轮重查'(p) {
+    await p.evaluate(() => { window.__serviceDown = true; });
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'error');
+    // 服务开了，但单个查询全报 500：这一轮做完，但不算查完
+    await p.evaluate(() => { window.__serviceDown = false; window.__lookupFail = true; R.regErrAt = 0; render(); });
+    await until(p, () => R.regStatus === 'done' && R.regRunFor === R.at);
+    const mid = await p.evaluate(() => ({ regFor: R.regFor === R.at, failed: Object.values(R.reg).filter((r) => !r.reg).length }));
+    // 一分钟后（这里直接把时间拨过去）再打开：失败的那些重新查到
+    await p.evaluate(() => { window.__lookupFail = false; R.regErrAt = 0; render(); });
+    await until(p, () => R.regFor === R.at && R.regStatus === 'done');
+    const end = await p.evaluate(() => ({ missing: R.items.filter((x) => R.dom[x.d] && !R.dom[x.d].hosted && !R.reg[R.dom[x.d].d]?.reg).length }));
+    return [!mid.regFor && mid.failed > 0, end.missing === 0, { mid, end }];
+  },
+  async '四轮#3 刷新后旧一轮的失败不覆盖新一轮'(p) {
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'running');
+    const r = await p.evaluate(async () => {
+      window.__lookupFail = true; window.__lookupDelay = 300;
+      const d = Object.values(R.dom).find((m) => m && !m.hosted && !R.reg[m.d])?.d;
+      R.at = R.at + 1;  // 换了一份（像刷新那样）：旧的一轮之后的结果都不该再写
+      R.reg[d] = { reg: '2020-01-02', source: 'RDAP' };
+      await new Promise((res) => setTimeout(res, 1500));
+      return { kept: R.reg[d]?.reg, d };
+    });
+    return [r.kept === '2020-01-02', r];
+  },
+  async '四轮#7/#9 主机名规范化、复制时清理单元格'(p) {
+    const r = await p.evaluate(() => ({ a: normHost('Café.com.'), b: normHost('APP.MailerFind.com'), c: tsvCell('=HYPERLINK("x")'), d: tsvCell('a\tb\nc'), e: tsvCell('-5'), f: tsvCell('ok') }));
+    return [r.a === 'xn--caf-dma.com' && r.b === 'app.mailerfind.com', r.c === `'=HYPERLINK("x")` && r.d === 'a b c' && r.e === "'-5" && r.f === 'ok', r];
+  },
+  async '四轮#8 超过 3000 个主机名分批归并'(p) {
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob);
+    await p.evaluate(() => { R.items = Array.from({ length: 3500 }, (_, i) => ({ d: `site${i}.com`, industry: '', grank: '-', share: '0.01%', rank: i + 1 })); R.at = R.at + 1; window.__normalizeCalls = 0; window.__normalizeMax = 0; lookupRefAges(); });
+    await until(p, () => R.regStatus === 'done' && R.regFor === R.at, null, 120000);
+    const r = await p.evaluate(() => ({ calls: window.__normalizeCalls, max: window.__normalizeMax, mapped: R.items.filter((x) => R.dom[x.d]).length }));
+    return [r.calls === 2 && r.max === 3000 && r.mapped === 3500, r];
+  },
+  async '四轮#4 查域名查询中打字：字不被冲掉'(p) {
+    await p.evaluate(() => { window.__lookupDelay = 150; });
+    await p.click('#tab-names');
+    await p.fill('[data-act=n-input]', 'pdf to jpg');
+    await p.press('[data-act=n-input]', 'Enter');
+    await until(p, () => N.status === 'running' && N.done > 0);
+    await p.fill('[data-act=n-input]', 'merge pdf');
+    await until(p, (n) => N.done >= n + 3, await p.evaluate(() => N.done));
+    const r = await p.evaluate(() => ({ value: document.querySelector('[data-act=n-input]').value, q: N.q }));
+    return [r.value === 'merge pdf' && r.q === 'pdf to jpg', r];
+  },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {
     await p.evaluate(() => window.__seedRefCache(5));
     await p.click('#tab-refs');

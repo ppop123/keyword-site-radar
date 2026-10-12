@@ -471,7 +471,7 @@ async function runCollect({ resume = false } = {}) {
   const alive = () => H === job && job.loop === my;
   const tabId = job.tabId;
   const call = (name, ...args) => pageCall(tabId, name, ...args);
-  Object.assign(job, { status: 'running', stopReq: false, err: null, reason: null, returnFailed: false, cleared: false, resumed: resume });
+  Object.assign(job, { status: 'running', stopReq: false, err: null, reason: null, returnFailed: false, resumed: resume });
   render();
   try {
     const st = await ensurePage(tabId);
@@ -868,7 +868,6 @@ function renderWords() {
   }
   const cnt = (f) => W.items.filter(f).length;
   const chip = (act, k, label, n, cur) => `<button class="fbtn" type="button" data-act="${act}" data-f="${esc(k)}" aria-pressed="${cur === k}">${esc(label)} ${n}</button>`;
-  const ev = W.meta?.evergreen?.found, rs = W.meta?.resurgence?.found;
   view.innerHTML = `<div class="list"><section class="status"><div class="stat-row"><div class="stat"><span class="big">${W.items.length}</span><span class="unit">个基础词</span>
 </div>
       <button class="btn" type="button" data-act="w-refresh">重新拉取</button></div>
@@ -1137,25 +1136,43 @@ function agePill(x) {
   return `<span class="age" title="${esc(m.d)} 注册于 ${esc(r.reg)}（${esc(r.source)}）">${ageText(r.reg)}</span>`;
 }
 
+// 主机名统一成服务那边的写法再比：小写、去掉末尾的点、非 ASCII 转 punycode（café.com → xn--caf-dma.com）
+function normHost(h) {
+  try { return new URL(`http://${String(h).trim().replace(/\.$/, '')}/`).hostname; } catch { return String(h).toLowerCase(); }
+}
+
 async function lookupRefAges() {
   const items = R.items;
-  if (!items.length || R.regFor === R.at) return;
-  R.regFor = R.at;
+  // 这一份查完了就不再查；正在查的不重开；上次失败（多半服务没开）隔一分钟再试（Codex 10-12 第四轮 #6）
+  if (!items.length || R.regFor === R.at || (R.regStatus === 'running' && R.regRunFor === R.at)) return;
+  if (R.regErrFor === R.at && Date.now() - R.regErrAt < 60000) return;
+  const at = R.at;
   const my = (R.regRun = (R.regRun || 0) + 1);
-  const alive = () => my === R.regRun;
-  Object.assign(R, { regStatus: 'running', regDone: 0, regTotal: 0, regErr: null });
+  const alive = () => my === R.regRun && R.at === at;
+  Object.assign(R, { regStatus: 'running', regRunFor: at, regDone: 0, regTotal: 0, regErr: null });
   paintRefAges();
   try {
-    const { items: groups } = await api('/normalize', { hosts: items.map((x) => ({ h: x.d, via: 'link' })), pageHost: 'sim.3ue.co' });
-    if (!alive()) return;
-    // 主机名 → 可注册域名：在归并结果里取能对上的最长那个
-    const keys = groups.map((g) => g.domain).sort((a, b) => b.length - a.length);
-    const hostedOf = new Map(groups.map((g) => [g.domain, g.hosted]));
-    for (const x of items) {
-      const d = keys.find((k) => x.d === k || x.d.endsWith('.' + k));
-      R.dom[x.d] = d ? { d, hosted: hostedOf.get(d) || null } : null;
+    // 服务一次最多归并 3000 个主机名：分批（第四轮 #8）
+    const hosts = items.map((x) => normHost(x.d));
+    const groups = [];
+    for (let i = 0; i < hosts.length; i += 3000) {
+      const r = await api('/normalize', { hosts: hosts.slice(i, i + 3000).map((h) => ({ h, via: 'link' })), pageHost: 'sim.3ue.co' });
+      if (!alive()) return;
+      groups.push(...r.items);
     }
-    const look = [...new Set(Object.values(R.dom).filter((m) => m && !m.hosted).map((m) => m.d))];
+    // 主机名 → 可注册域名：在归并结果里取能对上的最长那个
+    const keys = [...new Set(groups.map((g) => g.domain))].sort((a, b) => b.length - a.length);
+    const hostedOf = new Map(groups.map((g) => [g.domain, g.hosted]));
+    const dom = {};
+    for (const x of items) {
+      const h = normHost(x.d);
+      const d = keys.find((k) => h === k || h.endsWith('.' + k));
+      dom[x.d] = d ? { d, hosted: hostedOf.get(d) || null } : null;
+    }
+    R.dom = dom;
+    const look = [...new Set(Object.values(dom).filter((m) => m && !m.hosted).map((m) => m.d))];
+    // 只长期留着查到的注册日；没查到的、出错的每一轮都重新问一遍（服务端自己按 3 天缓存「没有」）（第四轮 #5）
+    for (const d of look) if (!R.reg[d]?.reg) delete R.reg[d];
     R.regTotal = look.length;
     for (let i = 0; i < look.length; i += 20) {
       const { results } = await api('/lookup', { domains: look.slice(i, i + 20), cachedOnly: true });
@@ -1165,7 +1182,7 @@ async function lookupRefAges() {
     const todo = look.filter((d) => !R.reg[d]);
     R.regDone = look.length - todo.length;
     paintRefAges(true);
-    let next = 0, down = null;
+    let next = 0, down = null, failed = 0;
     const worker = async () => {
       while (next < todo.length && alive() && !down) {
         const d = todo[next++];
@@ -1174,8 +1191,10 @@ async function lookupRefAges() {
           if (!alive()) return;
           Object.assign(R.reg, results);
         } catch (e) {
+          if (!alive()) return;  // 旧的一轮出错不许写进新的一轮（第四轮 #3）
           if (e.down) { down = e; return; }
           R.reg[d] = { reg: null, source: e.message };
+          failed++;
         }
         R.regDone++;
         paintRefAges();
@@ -1184,10 +1203,11 @@ async function lookupRefAges() {
     await Promise.all(Array.from({ length: 6 }, worker));
     if (!alive()) return;
     if (down) throw down;
-    R.regStatus = 'done';
+    // 有查失败的：这一份不算查完，过一分钟再补查那些（不然一次临时出错会挂 30 天）
+    Object.assign(R, failed ? { regStatus: 'done', regErrFor: at, regErrAt: Date.now() } : { regStatus: 'done', regFor: at });
   } catch (e) {
     if (!alive()) return;
-    Object.assign(R, { regStatus: 'error', regErr: e });
+    Object.assign(R, { regStatus: 'error', regErr: e, regErrFor: at, regErrAt: Date.now() });
   }
   paintRefAges(true);
 }
@@ -1242,6 +1262,8 @@ function renderRefList() {
   if (list) list.innerHTML = shown.map((x) => refRow(x, no.get(x.d))).join('') || '<div class="empty">没有符合条件的站。</div>';
 }
 
+const tsvCell = (v) => { let t = String(v ?? '').replace(/[\t\r\n]+/g, ' '); if (/^[=+\-@]/.test(t)) t = "'" + t; return t; };
+
 // 复制下面正显示的这些站（按当前筛选），粘到表格里一行一个
 async function copyRefs(btn) {
   const shown = refsShown();
@@ -1250,7 +1272,7 @@ async function copyRefs(btn) {
   for (const x of shown) {
     const m = R.dom[x.d], r = refRegOf(x);
     lines.push([no.get(x.d), x.d, refIsNew(x) ? '首次出现' : '', x.industry, x.grank === '-' ? '' : x.grank, x.share,
-      m?.hosted ? `托管于 ${m.hosted}` : r?.reg || '', r?.reg ? ageText(r.reg) : ''].join('\t'));
+      m?.hosted ? `托管于 ${m.hosted}` : r?.reg || '', r?.reg ? ageText(r.reg) : ''].map(tsvCell).join('\t'));
   }
   await navigator.clipboard.writeText(lines.join('\n'));
   btn.textContent = `已复制 ${shown.length} 个`;
@@ -1320,7 +1342,7 @@ function renderRefs() {
 
 const NAME_TLDS = ['com', 'net', 'org', 'ai', 'io', 'app', 'video'];
 const NAME_STOP = new Set(['to', 'for', 'and', 'the', 'a', 'an', 'of', 'in', 'on', 'with', 'by', 'at', 'my', 'your']);
-const N = { q: '', status: 'idle', forms: [], rows: [], done: 0, run: 0 };
+const N = { q: '', draft: '', status: 'idle', forms: [], rows: [], done: 0, run: 0 };
 
 // 组合：连写、连字符、去掉 to / for / the 这类虚词（连写、连字符）、to → 2、for → 4
 function nameForms(kw) {
@@ -1405,7 +1427,7 @@ function nameRow(x) {
 function renderNames() {
   const count = (s) => N.rows.filter((x) => nameState(x.r) === s).length;
   let html = `<div class="list"><section class="status">
-    <form class="namebar" data-act="n-form"><input class="search" type="search" data-act="n-input" placeholder="关键词，比如 pdf to jpg" value="${esc(N.q)}" aria-label="关键词" autocomplete="off">
+    <form class="namebar" data-act="n-form"><input class="search" type="search" data-act="n-input" placeholder="关键词，比如 pdf to jpg" value="${esc(N.draft)}" aria-label="关键词" autocomplete="off">
       <button class="btn primary" type="submit">查询</button></form>`;
   if (N.status === 'bad') html += '<div class="meta">只能查英文字母和数字组成的关键词。</div>';
   if (N.forms.length) {
@@ -1473,6 +1495,7 @@ view.addEventListener('click', async (ev) => {
 view.addEventListener('input', (ev) => {
   if (ev.target.dataset.act === 'w-search') { W.q = ev.target.value; renderWordList(); }
   else if (ev.target.dataset.act === 'r-search') { R.q = ev.target.value; renderRefList(); }
+  else if (ev.target.dataset.act === 'n-input') N.draft = ev.target.value;
 });
 
 view.addEventListener('change', async (ev) => {

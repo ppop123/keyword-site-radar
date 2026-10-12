@@ -108,6 +108,8 @@
     const body = opts?.body ? JSON.parse(opts.body) : {};
     if (path === '/normalize' && body.hosts?.some((x) => /^site\d+\.com$/.test(x.h))) {  // 只接找站那批（域名视图照旧走 stub.js）
       if (window.__serviceDown) throw new TypeError('Failed to fetch');
+      window.__normalizeCalls = (window.__normalizeCalls || 0) + 1;
+      window.__normalizeMax = Math.max(window.__normalizeMax || 0, body.hosts.length);
       const by = new Map();
       for (const { h } of body.hosts) {
         const hosted = /\.vercel\.app$/.test(h);  // 托管子域：单独成键、不查注册日（同 server.py 的 classify）
@@ -118,12 +120,14 @@
       return { ok: true, status: 200, json: async () => ({ items: [...by.values()] }) };
     }
     if (path === '/lookup' && !body.domains.some((d) => d in CANNED.results)) {
+      if (window.__serviceDown) throw new TypeError('Failed to fetch');
       if (body.cachedOnly) {
         window.__lookups.cachedOnly++;
         return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.filter((d) => hash(d) % 2 === 0).map((d) => [d, { reg: regOf(d), source: 'RDAP', cached: true }])) }) };
       }
       window.__lookups.single++;
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, window.__lookupDelay || 20));
+      if (window.__lookupFail) return { ok: false, status: 500, json: async () => ({}) };
       if (body.recheck) {  // 查域名：三分之一没注册，其余给注册日
         return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.map((d) => [d, hash(d) % 3 === 0
           ? { reg: null, source: 'RDAP 404；whois 无此域名', cached: false, free: true } : { reg: regOf(d), source: 'RDAP', cached: false, free: false }])) }) };

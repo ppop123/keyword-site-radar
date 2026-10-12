@@ -17,7 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -349,10 +349,13 @@ _CREATED = re.compile(
     r"registration (?:time|date)|domain registration date|record created|"
     r"domain record activated|commencement date)[ \t]*[.:]+[ \t]*(\S.*?)[ \t]*$")
 _MON = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
-# 明确「没有这个域名」
+# 明确「没有这个域名」：只认回答开头几行、出现在行首的说法（Verisign「No match for」、PIR / .ai / .io「Domain not found.」、
+# DENIC「Status: free」）。页脚条款里的「... is available ...」不算（Codex 10-12 第四轮 P1：有记录的回答被它判成没注册）
 _NO_MATCH = re.compile(
-    r"no match|not found|no data found|no entries found|no object found|"
-    r"status:\s*(?:free|available)|is available|not registered|domain not exist", re.I)
+    r"(?im)^[ \t]*(?:no match|(?:domain )?not found|no data found|no entries found|no object found|"
+    r"status:[ \t]*(?:free|available)|the queried object does not exist|domain not exist|not registered)")
+# 弱一点的说法（.nl「foo.nl is free」）：只在回答里没有域名记录行时才算「没有」
+_IS_FREE = re.compile(r"(?im)^[ \t]*\S+[ \t]+is[ \t]+(?:free|available)\b")
 # 明确是一条域名记录（只是没公开注册日，如 .de）
 _IS_RECORD = re.compile(r"(?im)^[ \t]*domain(?: name)?[ \t]*:[ \t]*\S")
 
@@ -414,9 +417,11 @@ def whois(domain):
         d = _parse_date(m.group(1))
         if d:
             return d, "whois"
-    if _NO_MATCH.search(txt):
+    head = "\n".join([ln for ln in txt.splitlines() if ln.strip()][:15])
+    record = _IS_RECORD.search(txt)
+    if _NO_MATCH.search(head) or (not record and _IS_FREE.search(head)):
         return None, "whois 无此域名"
-    if _IS_RECORD.search(txt):
+    if record:
         return None, "whois 不公开注册日"
     # 既不是记录也不是「无此域名」：多半是报错、限流，下次再查
     raise Transient("whois 回答无法识别")
@@ -444,6 +449,34 @@ def _free(reg, note):
     return not reg and ("RDAP 404" in note or "whois 无此域名" in note) and "不公开" not in note and "无注册日" not in note
 
 
+_inflight = {}
+_inflight_lock = threading.Lock()
+
+
+def _one_shared(domain):
+    """同一个域名同时只真查一次：已经有人在查就等它的结果，并由查的那个写缓存"""
+    with _inflight_lock:
+        fut = _inflight.get(domain)
+        owner = fut is None
+        if owner:
+            fut = _inflight[domain] = Future()
+    if not owner:
+        return fut.result(), False
+    try:
+        res = _one(domain)
+        d, reg, note, transient = res
+        if reg or not transient:
+            cache_put(d, reg, note)
+        fut.set_result(res)
+        return res, True
+    except BaseException as e:
+        fut.set_exception(e)
+        raise
+    finally:
+        with _inflight_lock:
+            _inflight.pop(domain, None)
+
+
 def lookup(domains, cached_only=False, recheck=False):
     """cached_only：只回本机已经查过的，没查过的不联网、也不出现在结果里（找站先秒出已知的域龄）。
     recheck：没查到注册日的不用缓存、重新查（查域名能不能注册时，3 天前的「没有」不算数）"""
@@ -457,9 +490,7 @@ def lookup(domains, cached_only=False, recheck=False):
     if cached_only:
         return out
     with ThreadPoolExecutor(6) as ex:
-        for d, reg, note, transient in ex.map(_one, todo):
-            if reg or not transient:
-                cache_put(d, reg, note)
+        for (d, reg, note, transient), _ in ex.map(_one_shared, todo):
             out[d] = {"reg": reg, "source": note, "cached": False, "free": not transient and _free(reg, note)}
     return out
 
