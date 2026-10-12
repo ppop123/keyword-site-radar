@@ -155,6 +155,9 @@ function setView(v) {
 function render() {
   const list = view.querySelector('.list');
   if (list && S.shown) S.scroll[S.shown] = list.scrollTop;
+  // 后台任务（收集、拉取）的进度会触发重画：正在打字的输入框画完放回焦点和光标
+  const fa = document.activeElement;
+  const typing = fa && view.contains(fa) && fa.dataset.act && fa.tagName === 'INPUT' ? { act: fa.dataset.act, a: fa.selectionStart, b: fa.selectionEnd } : null;
   if (S.view === 'domains') renderDomains();
   else if (S.view === 'hot') renderHot();
   else if (S.view === 'words') renderWords();
@@ -162,6 +165,10 @@ function render() {
   S.shown = S.view;
   const now = view.querySelector('.list');
   if (now && S.view) now.scrollTop = S.scroll[S.view] || 0;
+  if (typing) {
+    const el = view.querySelector(`input[data-act="${typing.act}"]`);
+    if (el) { el.focus({ preventScroll: true }); try { el.setSelectionRange(typing.a, typing.b); } catch { /* search 框不支持就算了 */ } }
+  }
 }
 // 新的一轮 / 换了筛选：从顶上看起
 const scrollTop = (v) => { S.scroll[v] = 0; const l = view.querySelector('.list'); if (l && S.shown === v) l.scrollTop = 0; };
@@ -170,7 +177,8 @@ const scrollTop = (v) => { S.scroll[v] = 0; const l = view.querySelector('.list'
 function hotShortcut() {
   const t = S.tab;
   if (!isSim(t) || !isKeywordPage(t.url)) return '';
-  if (H.status === 'running' || (H.tabId === t.id && H.status === 'done')) return '';  // 正在收集时点它会作废那一轮
+  if (H.status === 'running') return '';  // 正在收集时点它会作废那一轮
+  if (H.status === 'done' && H.tabId === t.id && H.url && pageKey(H.url) === pageKey(t.url)) return '';  // 这张表刚收过
   return `<div class="ctxnote act"><span>当前是 ${esc(simKey(t.url) || '这个域名')} 的关键词表</span><button class="link" type="button" data-act="go-hot">去收集新进热词 ›</button></div>`;
 }
 
@@ -343,7 +351,7 @@ function renderDomains() {
     : `<div class="meta">查到 ${found.length} · 查不到 ${miss.length - errors}${errors ? ` · 出错 ${errors}（再扫一次重查）` : ''} · 1 年内注册 ${fresh} 个</div>`;
   if (D.bases.length) {
     html += `<div class="diff"><span>对比</span><select aria-label="对比的那次扫描" data-act="dom-base">${D.bases.map((b) =>
-      `<option value="${b.id}"${b.id === D.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
+      `<option value="${esc(b.id)}"${b.id === D.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
       <button class="fbtn" type="button" data-act="dom-filter" data-f="all" aria-pressed="${D.filter !== 'new'}">全部 ${D.items.length}</button>
       <button class="fbtn new" type="button" data-act="dom-filter" data-f="new" aria-pressed="${D.filter === 'new'}"${dd.newCount ? '' : ' disabled'}>首次出现 ${dd.newCount}</button></div>`;
   } else if (D.items.length) {
@@ -668,7 +676,7 @@ function renderHot() {
     if (compared(H)) {
       const f = (k, label, n) => `<button class="fbtn${k === 'first' ? ' new' : ''}" type="button" data-act="hot-filter" data-f="${k}" aria-pressed="${H.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
       html += `<div class="diff"><span>对比</span><select aria-label="对比的那次查询" data-act="hot-base">${H.bases.map((b) =>
-        `<option value="${b.id}"${b.id === H.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
+        `<option value="${esc(b.id)}"${b.id === H.baseId ? ' selected' : ''}>${esc(dayLabel(b))}</option>`).join('')}</select>
         ${f('all', '全部', items.length)}${f('first', '首次出现', d.counts.first)}</div>`;
     } else if (['full', 'end', 'cap'].includes(H.reason)) {
       const other = H.others?.[0];
@@ -888,7 +896,7 @@ function renderWords() {
   const chip = (act, k, label, n, cur) => `<button class="fbtn" type="button" data-act="${act}" data-f="${esc(k)}" aria-pressed="${cur === k}">${esc(label)} ${n}</button>`;
   const ev = W.meta?.evergreen?.found, rs = W.meta?.resurgence?.found;
   view.innerHTML = `<div class="list">${hotShortcut()}<section class="status"><div class="stat-row"><div class="stat"><span class="big">${W.items.length}</span><span class="unit">个基础词</span>
-      <span class="chip" title="web.cafe 新词发现：长期大词 ${ev ?? '—'} · 二次爆火 ${rs ?? '—'}，两组都有的算一个">web.cafe</span></div>
+      <span class="chip" title="web.cafe 新词发现：长期大词 ${esc(ev ?? '—')} · 二次爆火 ${esc(rs ?? '—')}，两组都有的算一个">web.cafe</span></div>
       <button class="btn" type="button" data-act="w-refresh">重新拉取</button></div>
     <div class="meta">${fmtTime(W.at)} 拉取 · 12 小时内不重拉${W.err ? ` · 重新拉取失败：${esc(W.err.message)}` : ''}</div>
     <div class="frow"><span class="lbl">方向</span><div class="chips">${chip('w-dir', 'all', '全部', W.items.length, W.dir)}${WC_DIRS.map((d) => chip('w-dir', d, d, cnt((w) => w.dir === d), W.dir)).join('')}</div></div>
@@ -934,17 +942,19 @@ async function refCall(tabId, name, ...args) {
   return result;
 }
 
-// 翻页 / 回第 1 页：超时就让页面断开还在等的观察器（页面里不用定时器）
-async function refStep(tabId, name) {
-  const ok = await withTimeout(refCall(tabId, name), PAGE_TIMEOUT);
+// 翻页 / 回第 1 页：页面脚本点之前先核对地址还是这张表（用户可能刚跳走）；超时就让页面断开还在等的观察器
+async function refStep(tabId, name, href) {
+  const ok = await withTimeout(refCall(tabId, name, href), PAGE_TIMEOUT);
+  if (ok === 'moved') throw new Error('引荐页跳到别的页面了，已停止');
   if (!ok) await refCall(tabId, 'cancel').catch(() => {});
   return ok === true;
 }
 
-// 等表格出来再读：页面还在打开时注入会失败，表格在加载时读到 loading，都隔一秒再试
-async function refReady(tabId, timeout) {
+// 等表格出来再读：页面还在打开时注入会失败，表格在加载时读到 loading，都隔一秒再试；这一轮被停掉就不等了
+async function refReady(tabId, timeout, alive = () => true) {
   const until = Date.now() + timeout;
   for (;;) {
+    if (!alive()) return null;
     try {
       await chrome.scripting.executeScript({ target: { tabId }, files: ['ref.js'] });
       const s = await refCall(tabId, 'scan');
@@ -952,12 +962,12 @@ async function refReady(tabId, timeout) {
     } catch (e) {
       if (/No tab with id/.test(e.message)) throw new Error('引荐页被关掉了');
     }
-    if (Date.now() > until) return null;
+    if (Date.now() > until || !alive()) return null;
     await sleep(1000);
   }
 }
 
-// 已经开着这张表就直接用（不用再等登录和加载），没有就在后台开一个，读完关掉
+// 已经开着这张表就直接用（不用再等登录和加载），没有就在后台开一个
 async function refTab() {
   const open = (await chrome.tabs.query({ url: 'https://sim.3ue.co/*' })).find((t) => isRefPage(t.url));
   if (open) return { tabId: open.id, made: false };
@@ -965,40 +975,19 @@ async function refTab() {
   return { tabId: t.id, made: true };
 }
 
-// 我们在后台开的那个标签页。侧边栏一关，这里的代码就直接停了，收拾不了它：
-// 记给 service worker（侧边栏断开时它来关）和 storage（万一 service worker 也没在，下次打开侧边栏时关）
-const REF_OWNED = 'stripe-ref-tab';
-let ownedTab = null, swPort = null;
-function syncSw() {
-  try {
-    if (!swPort) {
-      swPort = chrome.runtime.connect({ name: 'panel' });
-      swPort.onDisconnect.addListener(() => { swPort = null; if (ownedTab != null) setTimeout(syncSw, 1000); });
-    }
-    swPort.postMessage({ refTab: ownedTab });
-  } catch { swPort = null; }
-}
-async function ownTab(id) {
-  ownedTab = id;
-  syncSw();
-  if (id == null) await chrome.storage.local.remove(REF_OWNED).catch(() => {});
-  else await chrome.storage.local.set({ [REF_OWNED]: id }).catch(() => {});
-}
-async function closeOrphanTab() {
-  const id = (await chrome.storage.local.get(REF_OWNED).catch(() => ({})))[REF_OWNED];
-  if (id == null) return;
-  const t = await chrome.tabs.get(id).catch(() => null);
-  if (t && !t.active && isRefPage(t.url)) await chrome.tabs.remove(id).catch(() => {});
-  await chrome.storage.local.remove(REF_OWNED).catch(() => {});
-}
-
 const refFrom = (c) => ({ items: c.items, at: c.at, total: c.total, short: c.short || '', prev: c.prev || null });
 const refCache = async () => (await chrome.storage.local.get(REF_CACHE).catch(() => ({})))[REF_CACHE] || null;
 
-// 正在跑的那一轮：{ cancelled, tabId, made, finished }。停止 / 新的一轮都要等旧的一轮收拾完它的标签页
+// 正在跑的那一轮：{ cancelled, committing, tabId, made, touched, finished }。停止 / 新的一轮都要等旧的一轮收拾完
 let refJob = null;
+// 我们后台开的那页，用户切过去看过、或者在里面跳到别的页面了，就归用户了：读完不关（Codex 10-12 第二轮 #1）
+chrome.tabs.onActivated.addListener(({ tabId }) => { if (refJob && tabId === refJob.tabId) refJob.touched = true; });
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (refJob && tabId === refJob.tabId && info.url && !isRefPage(info.url)) refJob.touched = true;
+});
 
-// 收拾这一轮用过的标签页：断开页面里的等待；自己开的关掉，用户开着的（还是这张表才）回第 1 页。
+// 收拾这一轮用过的标签页：断开页面里的等待；自己开的、用户没碰过、还停在引荐页、又不在前台的才关，
+// 用户开着的那页（还是这张表才）回第 1 页。侧边栏中途被关掉时这里跑不到：后台那页留着，下次拉取直接复用它。
 // 停止时和这一轮自己结束时都会调，同一个标签页只收拾一次
 function cleanupRefJob(job) {
   if (job.tabId == null) return Promise.resolve();
@@ -1007,13 +996,10 @@ function cleanupRefJob(job) {
     const { tabId, made } = job;
     job.cleaning = (async () => {
       await refCall(tabId, 'cancel').catch(() => {});
-      if (made) {
-        await chrome.tabs.remove(tabId).catch(() => {});
-        if (ownedTab === tabId) await ownTab(null);
-      } else {
-        const t = await chrome.tabs.get(tabId).catch(() => null);
-        if (t && isRefPage(t.url)) await refStep(tabId, 'first').catch(() => {});
-      }
+      const t = await chrome.tabs.get(tabId).catch(() => null);
+      if (!t || !isRefPage(t.url)) return;
+      if (made && !job.touched && !t.active) await chrome.tabs.remove(tabId).catch(() => {});
+      else if (!made) await refStep(tabId, 'first', t.url).catch(() => {});
     })().catch(() => {});
   }
   return job.cleaning;
@@ -1023,7 +1009,7 @@ async function loadRefs({ force = false } = {}) {
   if (refJob && !refJob.cancelled) return;  // 已经有一轮在跑：不开第二轮（双击、反复点页签）
   const prevJob = refJob;
   let finish;
-  const job = { cancelled: false, tabId: null, made: false, finished: new Promise((r) => { finish = r; }) };
+  const job = { cancelled: false, tabId: null, made: false, touched: false, finished: new Promise((r) => { finish = r; }) };
   refJob = job;
   const alive = () => refJob === job && !job.cancelled;
   try {
@@ -1033,23 +1019,24 @@ async function loadRefs({ force = false } = {}) {
     if (!alive()) return;
     const has = !!cache?.items?.length;
     if (has) Object.assign(R, refFrom(cache));
-    // 没满 30 天就用存着的那份，不去动它；满了自动重拉——但每次打开侧边栏只自动试一次，没登录 sim 时别反复开标签页
-    if (!force && has && (!refDue(cache.at) || R.autoTried)) { R.status = 'done'; return; }
-    if (!force) R.autoTried = true;
+    // 没满 30 天就用存着的那份，不去动它；满了自动重拉——同一份缓存只自动试一次（没登录 sim 时别反复开标签页），
+    // 拉到新的一份就是新的 30 天（Codex 10-12 第二轮 #8）
+    const version = has ? cache.at : 0;
+    if (!force && has && (!refDue(cache.at) || R.autoTriedFor === version)) { R.status = 'done'; return; }
+    if (!force) R.autoTriedFor = version;
     // 对比的基线：存着的那份满 30 天了就拿它当上一份；没满 30 天时手动重拉，基线还是原来那份，节奏不乱
     const prev = !has ? null : refDue(cache.at) ? { at: cache.at, domains: cache.items.map((x) => x.d) } : cache.prev || null;
     Object.assign(R, { status: 'loading', stopping: false, err: null, page: 0, pages: 0, got: 0, made: false });
     render();
     const t = await refTab();
     Object.assign(job, t);
-    if (t.made) await ownTab(t.tabId);
     if (!alive()) return;
     R.made = t.made;
     render();
     const tabId = t.tabId;
     // 每次读表都核对还是不是这张表：用户开着的那页可能中途跳到别的域名
     const read = async (timeout) => {
-      const s = await refReady(tabId, timeout);
+      const s = await refReady(tabId, timeout, alive);
       if (s && !isRefPage(s.href)) throw new Error('引荐页跳到别的页面了，已停止');
       return s;
     };
@@ -1074,7 +1061,7 @@ async function loadRefs({ force = false } = {}) {
     await sleep(PAGE_GAP);
     s = await read(PAGE_TIMEOUT);
     if (!alive()) return;
-    if (s && s.cur !== 1 && !await refStep(tabId, 'first')) {  // 开着的那页翻到了后面：先回第 1 页
+    if (s && s.cur !== 1 && !await refStep(tabId, 'first', s.href)) {  // 开着的那页翻到了后面：先回第 1 页
       if (!alive()) return;
       throw new Error('回第 1 页超时');
     }
@@ -1094,7 +1081,7 @@ async function loadRefs({ force = false } = {}) {
       if (page >= s.pages || page >= REF_PAGE_CAP) break;
       await sleep(PAGE_GAP);
       if (!alive()) return;
-      if (!await refStep(tabId, 'next')) {
+      if (!await refStep(tabId, 'next', s.href)) {
         if (!alive()) return;
         throw new Error(`翻到第 ${page + 1} 页超时`);
       }
@@ -1103,7 +1090,10 @@ async function loadRefs({ force = false } = {}) {
     // 表头写着一共多少个；读到的少了就照实说（多半是中途表格换了数据）
     const short = s.total && items.length < s.total ? `只读到 ${items.length} / ${s.total} 个` : '';
     const data = { items: items.filter((x) => !ignoredDomain(x.d)), at: Date.now(), total: s.total, short, prev };
-    if (!alive()) return;  // 停止之后不再写；写入一旦开始，停止会等它写完再读回来，界面和存着的一致
+    if (!alive()) return;
+    // 写缓存这一下不能停（几毫秒）：开始写了，「停止」就不再生效，界面和存着的一定一致（Codex 10-12 第二轮 #5）
+    job.committing = true;
+    render();
     await chrome.storage.local.set({ [REF_CACHE]: data });
     Object.assign(R, refFrom(data), { status: 'done', err: null, filter: 'all' });
   } catch (e) {
@@ -1116,10 +1106,10 @@ async function loadRefs({ force = false } = {}) {
   }
 }
 
-// 停止：这一轮作废，马上收拾标签页；等它退出后回到存着的那份
+// 停止：这一轮作废，马上收拾标签页；等它退出后回到存着的那份。已经在写缓存了就不停（马上就写完）
 async function stopRefs() {
   const job = refJob;
-  if (!job || job.cancelled) return;
+  if (!job || job.cancelled || job.committing) return;
   job.cancelled = true;
   R.stopping = true;
   render();
@@ -1147,7 +1137,7 @@ function refsShown() {
 function refRow(x, no) {
   const ind = x.industry && x.industry !== '未知' ? x.industry : '';
   const rank = x.grank && x.grank !== '-' ? x.grank : '';
-  return `<div class="hrow tall ref"><span class="c-rank" title="sim 表里第 ${x.rank} 名">${no}</span>
+  return `<div class="hrow tall ref"><span class="c-rank" title="sim 表里第 ${esc(x.rank)} 名">${esc(no)}</span>
     <div class="kwcell"><span class="dname"><a class="ext" href="${esc(domainUrl(x.d))}" title="在 sim 看 ${esc(x.d)} 的新进关键词">${esc(x.d)}</a>
       <a class="ext site" href="https://${esc(x.d)}/" title="打开 ${esc(x.d)}" aria-label="打开 ${esc(x.d)}">${ICON_OPEN}</a>
       ${refIsNew(x) ? '<span class="badge new" title="上一份里没有">首次出现</span>' : ''}</span></div>
@@ -1169,7 +1159,7 @@ const REF_ABOUT = '把访客送进 checkout.stripe.com 的网站（= 在收钱�
 function renderRefs() {
   if (R.status === 'idle') { view.innerHTML = ''; loadRefs(); return; }
   // 同一个侧边栏开着跨过了 30 天：照样自动更新一次
-  if (R.status === 'done' && refDue(R.at) && !R.autoTried && !refJob) setTimeout(() => loadRefs(), 0);
+  if (R.status === 'done' && refDue(R.at) && R.autoTriedFor !== R.at && !refJob) setTimeout(() => loadRefs(), 0);
   // 出错、加载、停止时只留一个主动作：不放快捷条
   const top = '<div class="list">' + (R.status === 'done' ? hotShortcut() : '');
   if (R.status === 'stopped') {
@@ -1190,7 +1180,7 @@ function renderRefs() {
     const where = R.stopping ? '正在停止…' : R.page ? `第 ${R.page} / ${R.pages} 页`
       : R.made ? '在后台开了一个 sim 引荐页，等表格出来…' : '等引荐页上的表格出来…';
     html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.got}</span><span class="unit">个站</span><span class="chip" title="${esc(REF_ABOUT)}">Stripe 引荐</span></div>
-      <button class="btn" type="button" data-act="r-stop"${R.stopping ? ' disabled' : ''}>${R.stopping ? '正在停止' : '停止'}</button></div>
+      <button class="btn" type="button" data-act="r-stop"${R.stopping || refJob?.committing ? ' disabled' : ''}>${R.stopping ? '正在停止' : refJob?.committing ? '正在保存' : '停止'}</button></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="meta">${where} · 约半分钟，读完${R.made ? '关掉那个标签页' : '回到第 1 页'}${R.items.length ? ' · 下面先显示上一份' : ''}</div></section>`;
     if (!R.items.length) { view.innerHTML = html + '</div>'; return; }
@@ -1324,12 +1314,12 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 });
 // 找词因为没登录 web.cafe 拿不到：登录完回到侧边栏就自动再试
 window.addEventListener('focus', () => {
+  if (S.view === 'refs' && R.status === 'done' && refDue(R.at)) render();  // 跨过 30 天：重画时会自动更新一次
   if (W.status === 'login' || (W.status === 'error' && !W.items.length)) loadWords({ force: true });
 });
 
 // 打开时按当前页面默认选一项：sim 关键词表 → 新进热词，其他 → 域名注册时间
 (async () => {
-  closeOrphanTab();  // 上次侧边栏中途关掉时留下的后台引荐页
   await refreshContext();
   lastTabKey = `${S.tab?.id}|${S.tab?.url}`;
   if (isSim(S.tab) && isKeywordPage(S.tab.url)) { probeHot(); setView('hot'); }

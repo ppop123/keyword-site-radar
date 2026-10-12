@@ -1,7 +1,7 @@
 // 找站：读 sim 上 checkout.stripe.com 的「外链 → 引荐网站」表（Similarweb 自己的分栏表格，不是 Ant 表格）。
 // 给侧边栏提供「读本页 / 下一页 / 回第 1 页 / 取消等待」；翻页节奏、超时由侧边栏控制。重复注入不会重复初始化。
 (() => {
-  const VERSION = 2;
+  const VERSION = 3;
   if (window.__pkRef && window.__pkRef.version === VERSION) return;
   window.__pkRef?.cancel?.();  // 旧版本还在等的先断开
 
@@ -67,8 +67,12 @@
     });
   }
 
-  async function next() {
+  // href：侧边栏最后一次读表时的地址；点之前核对一下，用户刚跳到别的表就不点（翻页不改地址）
+  const moved = (href) => !!href && location.href !== href;
+
+  async function next(href) {
     cancel();
+    if (moved(href)) return 'moved';
     const p = pager();
     if (!p || p.cur >= p.total || !p.arrows[2]) return false;
     const before = firstDomain();
@@ -76,8 +80,9 @@
     return waitForNewPage(before);
   }
 
-  async function first() {
+  async function first(href) {
     cancel();
+    if (moved(href)) return 'moved';
     const p = pager();
     if (!p || p.cur === 1) return true;
     const before = firstDomain();

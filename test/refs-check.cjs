@@ -1,4 +1,4 @@
-// 「找站」生命周期场景测试（对应 Codex 10-12 审查的 8 条）：node test/refs-check.cjs
+// 「找站」生命周期场景测试（对应 Codex 10-12 两轮审查）：node test/refs-check.cjs（ONLY=名字片段 只跑那几个）
 // 跑在测试页 4 上：假 sim 引荐页在 iframe 里，真把 extension/ref.js 注入进去。
 const { spawn } = require('child_process');
 const path = require('path');
@@ -11,16 +11,16 @@ const until = (p, fn, arg, ms = 60000) => p.waitForFunction(fn, arg, { timeout: 
 const state = (p) => p.evaluate(() => ({
   status: R.status, n: R.items.length, err: R.err?.message || null, job: !!refJob,
   created: window.__refCreatedIds || [], removed: [...window.__removedTabs],
-  saved: window.__wcStore['stripe-ref-v1']?.items?.length ?? null, owned: window.__wcStore['stripe-ref-tab'] ?? null,
+  saved: window.__wcStore['stripe-ref-v1']?.items?.length ?? null,
   prevAt: window.__wcStore['stripe-ref-v1']?.prev?.at ?? null,
 }));
 
 const CASES = {
-  async '正常拉取：读满、关掉自己开的标签页、不留归属记录'(p) {
+  async '正常拉取：读满、关掉自己开的后台标签页'(p) {
     await p.click('#tab-refs');
     await until(p, () => R.status === 'done' && !refJob);
     const s = await state(p);
-    return [s.n === 972 && s.saved === 972, s.created.length === 1 && s.removed.includes(s.created[0]), s.owned === null, s];
+    return [s.n === 972 && s.saved === 972, s.created.length === 1 && s.removed.includes(s.created[0]), s];
   },
   async '#3 双击 / 连点：只开一轮'(p) {
     await p.evaluate(() => { document.getElementById('tab-refs').click(); loadRefs({ force: true }); loadRefs({ force: true }); });
@@ -51,13 +51,13 @@ const CASES = {
     await until(p, () => !!window.__refFrame.contentWindow.document.querySelector('.swReactTable-wrapper'));
     await p.click('#tab-refs');
     await until(p, () => R.page >= 2);
-    await p.evaluate(() => { window.__refFrame.contentWindow.__href = window.__refFrame.contentWindow.__href.replace('checkout.stripe.com', 'other.com'); });
+    // 刚收完第 2 页、还在翻页间隔里就跳走（Codex 第二轮 #7：以前会先误翻一次新表）
+    const flipsAt = await p.evaluate(() => { const w = window.__refFrame.contentWindow; w.__href = w.__href.replace('checkout.stripe.com', 'other.com'); return w.__flips; });
     await until(p, () => !refJob && R.status !== 'loading');
-    const flipsAfter = await p.evaluate(() => window.__refFrame.contentWindow.__flips);
     await p.waitForTimeout(1500);
     const flipsLater = await p.evaluate(() => window.__refFrame.contentWindow.__flips);
     const s = await state(p);
-    return [/跳到别的页面/.test(s.err || ''), s.saved === null, s.created.length === 0, flipsAfter === flipsLater, s];
+    return [/跳到别的页面/.test(s.err || ''), s.saved === null, s.created.length === 0, flipsLater === flipsAt, { ...s, flipsAt, flipsLater }];
   },
   async '#5 页码框 0.9 秒后才更新：照样读完、名次对'(p) {
     await p.evaluate(() => { window.__inputLag = 900; });
@@ -86,14 +86,61 @@ const CASES = {
     });
     return [r.before === 1 && r.after === 0 && r.result === false, r];
   },
-  async '#7 侧边栏中途关掉留下的后台页：下次打开时关掉'(p) {
-    const r = await p.evaluate(async () => {
-      window.__refTabs.add(77);
-      window.__wcStore['stripe-ref-tab'] = 77;
-      await closeOrphanTab();
-      return { removed: [...window.__removedTabs], owned: window.__wcStore['stripe-ref-tab'] ?? null };
+  async '二轮#1 用户切到我们开的后台页看过：读完不关'(p) {
+    await p.click('#tab-refs');
+    await until(p, () => R.page >= 2);
+    await p.evaluate(() => window.__onActivated.forEach((f) => f({ tabId: refJob.tabId })));
+    await until(p, () => R.status === 'done' && !refJob);
+    const s = await state(p);
+    return [s.n === 972, !s.removed.includes(s.created[0]), s];
+  },
+  async '二轮#5 写缓存时点停止：不生效，界面和存着的一致'(p) {
+    await p.evaluate(() => { window.__slowSet = 1500; });
+    await p.click('#tab-refs');
+    await until(p, () => refJob?.committing);
+    await p.evaluate(() => stopRefs());
+    await until(p, () => !refJob && R.status !== 'loading');
+    const s = await state(p);
+    return [s.status === 'done' && s.n === 972 && s.saved === 972, s];
+  },
+  async '二轮#6 停掉还在加载的用户页：这一轮马上退出，不卡下一轮'(p) {
+    await p.evaluate(() => { window.__refOpen = true; window.__refLoadDelay = 1e7; window.__refLoad(); });
+    await p.click('#tab-refs');
+    await p.waitForTimeout(2500);
+    const ms = await p.evaluate(async () => { const job = refJob; const t0 = Date.now(); stopRefs(); await job.finished; return Date.now() - t0; });
+    const s = await state(p);
+    return [ms < 3000, s.status === 'stopped', { ...s, ms }];
+  },
+  async '二轮#8 拉到新的一份后又过了 30 天：再自动更新一次'(p) {
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob);
+    await p.evaluate(() => { const c = window.__wcStore['stripe-ref-v1']; c.at = Date.now() - 31 * 86400000; R.at = c.at; render(); });
+    await until(p, () => (window.__refCreatedIds || []).length === 2 && R.status === 'done' && !refJob);
+    const s = await state(p);
+    return [s.n === 972 && s.prevAt != null, s];
+  },
+  async '二轮#9 后台拉取的进度重画：搜索框不丢焦点、字不丢'(p) {
+    await p.evaluate(() => window.__seedRefCache(31));
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'loading' && !!document.querySelector('[data-act=r-search]'));
+    await p.click('[data-act=r-search]');
+    await p.keyboard.type('site1');
+    const pageAt = await p.evaluate(() => R.page);
+    await until(p, (n) => R.page >= n + 2, pageAt);
+    const r = await p.evaluate(() => ({ focused: document.activeElement?.dataset?.act, value: document.activeElement?.value }));
+    return [r.focused === 'r-search' && r.value === 'site1', r];
+  },
+  async '二轮#10 同一个标签页换了另一张关键词表：快捷条照样显示'(p) {
+    const r = await p.evaluate(() => {
+      const a = 'https://sim.3ue.co/#/organicsearch/pageAnalysis/website-keyword-v2/*/999/28d?key=a.com&Change=New';
+      const b = 'https://sim.3ue.co/#/organicsearch/pageAnalysis/website-keyword-v2/*/999/28d?key=b.com&Change=New';
+      H = { status: 'done', loop: 0, tabId: 7, url: a };
+      S.tab = { id: 7, url: a }; const same = hotShortcut();
+      S.tab = { id: 7, url: b }; const other = hotShortcut();
+      H = { status: 'running', loop: 0, tabId: 9, url: a }; const running = hotShortcut();
+      return { same: !!same, other: !!other, running: !!running };
     });
-    return [r.removed.includes(77) && r.owned === null, r];
+    return [!r.same && r.other && !r.running, r];
   },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {
     await p.evaluate(() => window.__seedRefCache(5));

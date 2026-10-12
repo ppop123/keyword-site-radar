@@ -83,11 +83,21 @@
     const w = frame.contentWindow;
     if (w.document.readyState !== 'complete') throw new Error('Frame is still loading');
     if (o.files) { w.eval(await (await w.fetch(new URL('../extension/' + o.files[0], location.href).href)).text()); return [{}]; }
+    // ref.js 翻页前会拿侧边栏给的地址和 location.href 比；iframe 的地址是 about:srcdoc：
+    // 侧边栏给的就是当前假地址 → 换成 iframe 真地址（没跳走）；不是 → 换成别的（跳走了）
+    if (Array.isArray(o.args?.[1]) && typeof o.args[1][0] === 'string') o.args[1][0] = o.args[1][0] === w.__href ? w.location.href : 'about:moved';
     const result = await w.eval('(' + o.func.toString() + ')').apply(null, o.args || []);
     if (result && typeof result === 'object' && 'href' in result) result.href = w.__href;
     return [{ result }];
   };
   window.__refLoad = load;
+  // 记下侧边栏注册的「切换标签页」监听，测试里可以假装用户切到了某个标签页
+  window.__onActivated = [];
+  chrome.tabs.onActivated = { addListener: (fn) => window.__onActivated.push(fn) };
+  // 写缓存慢一点（毫秒），测「写的时候点停止」
+  window.__slowSet = 0;
+  const realSet = chrome.storage.local.set;
+  chrome.storage.local.set = async (o) => { if (window.__slowSet) await new Promise((r) => setTimeout(r, window.__slowSet)); return realSet(o); };
   // 上一份：site0–site899 里去掉 site10–site19，所以本月首次出现 = site10–19 + site900–973
   const prevItems = rows.slice(0, 900).filter((_, i) => i < 10 || i >= 20).filter((r) => !/similarweb/.test(r.d))
     .map((r, i) => ({ d: r.d, industry: r.ind, grank: r.rank, share: r.share, sub: r.sub, rank: i + 1 }));
