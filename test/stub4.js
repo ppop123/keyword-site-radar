@@ -80,6 +80,8 @@
   chrome.scripting.executeScript = async (o) => {
     if (!window.__refTabs.has(o.target.tabId)) return prevExec(o);
     if (window.__refBroken || window.__removedTabs.includes(o.target.tabId)) throw new Error('No tab with id: ' + o.target.tabId);
+    if (o.files && window.__hangInject) return new Promise(() => {});  // 注入一直不回（页面迟迟没到 document_idle）
+    if (o.args?.[0] === 'cancel' && window.__slowCancel) await new Promise((r) => setTimeout(r, window.__slowCancel));
     const w = frame.contentWindow;
     if (w.document.readyState !== 'complete') throw new Error('Frame is still loading');
     if (o.files) { w.eval(await (await w.fetch(new URL('../extension/' + o.files[0], location.href).href)).text()); return [{}]; }
@@ -91,6 +93,36 @@
     return [{ result }];
   };
   window.__refLoad = load;
+  // 本机服务在找站这边的两个接口：/normalize 把主机名归到可注册域名（够用的简化版公共后缀），
+  // /lookup 给确定的假注册日；cachedOnly 只回一半（假装另一半还没查过），没查过的单个查要 20ms
+  const hash = (t) => [...t].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const regOf = (d) => {
+    if (d === 'evolink.ai' || d === 'mai-ko.com' || hash(d) % 7 === 0) return new Date(Date.now() - (20 + hash(d) % 300) * 86400000).toLocaleDateString('sv');
+    return `${2005 + hash(d) % 19}-0${1 + hash(d) % 9}-1${hash(d) % 9}`;
+  };
+  const registrable = (h) => { const l = h.split('.'); return l.slice(/^(co|com)\.(uk|au)$/.test(l.slice(-2).join('.')) ? -3 : -2).join('.'); };
+  window.__lookups = { cachedOnly: 0, single: 0 };
+  const prevFetch = window.fetch;
+  window.fetch = async (u, opts) => {
+    const path = new URL(u, location.href).pathname;
+    const body = opts?.body ? JSON.parse(opts.body) : {};
+    if (path === '/normalize' && body.hosts?.some((x) => /^site\d+\.com$/.test(x.h))) {  // 只接找站那批（域名视图照旧走 stub.js）
+      if (window.__serviceDown) throw new TypeError('Failed to fetch');
+      const by = new Map();
+      for (const { h } of body.hosts) { const d = registrable(h); const it = by.get(d) || { domain: d, hosted: null, self: false, n: 0, via: ['link'], hosts: [] }; it.hosts.push(h); by.set(d, it); }
+      return { ok: true, status: 200, json: async () => ({ items: [...by.values()] }) };
+    }
+    if (path === '/lookup' && !body.domains.some((d) => d in CANNED.results)) {
+      if (body.cachedOnly) {
+        window.__lookups.cachedOnly++;
+        return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.filter((d) => hash(d) % 2 === 0).map((d) => [d, { reg: regOf(d), source: 'RDAP', cached: true }])) }) };
+      }
+      window.__lookups.single++;
+      await new Promise((r) => setTimeout(r, 20));
+      return { ok: true, status: 200, json: async () => ({ results: Object.fromEntries(body.domains.map((d) => [d, { reg: regOf(d), source: 'whois', cached: false }])) }) };
+    }
+    return prevFetch(u, opts);
+  };
   // 记下侧边栏注册的「切换标签页」监听，测试里可以假装用户切到了某个标签页
   window.__onActivated = [];
   chrome.tabs.onActivated = { addListener: (fn) => window.__onActivated.push(fn) };

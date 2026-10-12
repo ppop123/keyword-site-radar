@@ -66,7 +66,8 @@ const FRAMES = [
   ['8-refs-done', async (p) => {
     await p.evaluate(() => window.__seedRefCache(31));
     await p.click('#tab-refs');
-    await until(p, () => R.status === 'done' && !refJob && !!document.querySelector('#rlist .hrow'), null, 90000);
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done' && !!document.querySelector('#rlist .hrow'), null, 120000);
+    await p.waitForTimeout(500);  // 等域龄最后一次就地刷新
   }],
   ['9-refs-error', async (p) => {
     await p.evaluate(() => { window.__refBroken = true; });

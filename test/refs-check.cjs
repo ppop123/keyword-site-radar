@@ -142,6 +142,65 @@ const CASES = {
     });
     return [!r.same && r.other && !r.running, r];
   },
+  async '三轮#1 停止后马上重拉：旧一轮收拾时用户切到它的页，不关'(p) {
+    await p.evaluate(() => { window.__slowCancel = 600; });
+    await p.click('#tab-refs');
+    await until(p, () => R.page >= 2);
+    const oldTab = await p.evaluate(() => { const t = refJob.tabId; stopRefs(); loadRefs({ force: true }); window.__onActivated.forEach((f) => f({ tabId: t })); return t; });
+    await until(p, () => R.status === 'done' && !refJob && (window.__refCreatedIds || []).length === 2, null, 90000);
+    const s = await state(p);
+    return [!s.removed.includes(oldTab), s.n === 972, { ...s, oldTab }];
+  },
+  async '三轮#2 过期缓存手动重拉后停止：不再自动开一轮'(p) {
+    await p.evaluate(() => window.__seedRefCache(5));
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done');
+    await p.evaluate(() => { const c = window.__wcStore['stripe-ref-v1']; c.at = Date.now() - 31 * 86400000; R.at = c.at; loadRefs({ force: true }); });
+    await until(p, () => R.page >= 2);
+    await p.evaluate(() => stopRefs());
+    await until(p, () => !refJob && R.status === 'done');
+    await p.waitForTimeout(3000);
+    const s = await state(p);
+    return [s.created.length === 1, s.n === 888, s];
+  },
+  async '三轮#3 停止时页面注入还卡着：这一轮马上退出'(p) {
+    await p.evaluate(() => { window.__refOpen = true; window.__refLoadDelay = 10; window.__refLoad(); window.__hangInject = true; });
+    await until(p, () => !!window.__refFrame.contentWindow.document.querySelector('.swReactTable-wrapper'));
+    await p.click('#tab-refs');
+    await p.waitForTimeout(1500);
+    const ms = await p.evaluate(async () => { const job = refJob; const t0 = Date.now(); stopRefs(); await job.finished; return Date.now() - t0; });
+    const s = await state(p);
+    return [ms < 3000, s.status === 'stopped', { ...s, ms }];
+  },
+  async '域龄：查过的先出、没查过的补查，1 年内注册筛选 + 复制'(p) {
+    await p.click('#tab-refs');
+    await until(p, () => R.status === 'done' && !refJob && R.regStatus === 'done', null, 120000);
+    await p.waitForTimeout(600);  // 等最后一次就地刷新
+    const r = await p.evaluate(async () => {
+      const young = R.items.filter(refYoung).length;
+      const pills = document.querySelectorAll('#rlist .agecell .age').length, all = R.items.length;
+      const chip = document.querySelector('[data-act=r-young]').textContent;
+      const look = new Set(Object.values(R.dom).filter(Boolean).map((m) => m.d)).size;
+      document.querySelector('[data-act=r-young]').click();
+      const rows = document.querySelectorAll('#rlist .hrow').length;
+      const copyLabel = document.querySelector('[data-act=r-copy]').textContent;
+      document.querySelector('[data-act=r-copy]').click();
+      await new Promise((res) => setTimeout(res, 100));
+      const lines = (window.__copied || '').split('\n');
+      return { young, pills, all, chip, look, rows, copyLabel, lines: lines.length, head: lines[0], cols: lines[1]?.split('\t').length, sample: lines[1], ...window.__lookups };
+    });
+    return [r.young > 0 && r.chip === `1 年内注册 ${r.young}`, r.pills === r.all, r.rows === r.young && r.copyLabel === `复制 ${r.young} 个`,
+      r.lines === r.young + 1 && r.cols === 8, r.cachedOnly === Math.ceil(r.look / 20) && r.single > 0, r];
+  },
+  async '热门网址：每行显示站名，点开是它的新进关键词页'(p) {
+    await until(p, () => !!document.querySelector('[data-act=collect]'));
+    await p.click('[data-act=collect]');
+    await until(p, () => !document.querySelector('[data-act=stop]') && !!document.querySelector('[data-act=export]'));
+    const r = await p.evaluate(() => [...document.querySelectorAll('.list .hrow .topurl')].slice(0, 6).map((a) => ({ t: a.textContent, href: a.getAttribute('href') })));
+    const okText = r.length === 6 && r.every((x) => !/^www\./.test(x.t) && /\./.test(x.t));
+    const okHref = r.every((x) => x.href.includes('website-keyword-v2') && x.href.includes('key=' + encodeURIComponent(x.t)));
+    return [okText, okHref, r];
+  },
   async '#8 同一个侧边栏开着跨过 30 天：自动更新一次'(p) {
     await p.evaluate(() => window.__seedRefCache(5));
     await p.click('#tab-refs');

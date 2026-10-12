@@ -605,14 +605,22 @@ function hotDiff(job) {
 
 const fmtRatio = (x) => `${x.ge ? '≥' : ''}${x.ratio >= 100 ? Math.round(x.ratio) : x.ratio.toFixed(1)}×`;  // ≥100 显示整数，倍数列才放得下
 
-// 一行一个词：关键词、Trends、首次出现排在一起（放不下才折行），数字列对齐第一行
+// 热门网址只显示站名（去掉 www.）：这个词的流量是大站在吃还是新站在吃，一眼看得出（用户 10-12 同意资深用户的建议）
+function topHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+// 一行一个词：关键词、Trends、首次出现排在一起（放不下才折行），数字列对齐第一行；
+// 热门网址的站放在数字列下面（关键词本来就两行时不加高，跟在 Trends 后面会多出一行）
 function hotRow(x, order, chg, filter) {
   const badge = chg.get(x.kw) && filter !== 'first' ? '<span class="badge new" title="上次查询的名单里没有">首次出现</span>' : '';
+  const host = topHost(x.url);
+  const top = host ? `<a class="ext topurl" href="${esc(domainUrl(host))}" title="热门网址：${esc(x.url)}\n点开看 ${esc(host)} 的新进关键词">${esc(host)}</a>` : '';
   return `<div class="hrow"><span class="c-rank">${order}</span>
     <div class="kwcell"><a class="ext kw" href="${esc(kwUrl(x.kw))}" title="${esc(x.kw)}（表里第 ${x.rank} 名）">${esc(x.kw)}</a>
       <a class="ext trends" href="${esc(trendsUrl(x.kw))}" title="Google Trends 近 1 个月，和 ${TRENDS_BASE} 对比">Trends</a>${badge}</div>
-    <span class="c-num">${esc(x.t)}</span><span class="c-num dim">${esc(x.v)}</span>
-    <span class="c-ratio"><span class="ratio ${x.red ? 'red' : 'orange'}">${fmtRatio(x)}</span></span></div>`;
+    <div class="nums"><div class="numrow"><span class="c-num">${esc(x.t)}</span><span class="c-num dim">${esc(x.v)}</span>
+      <span class="c-ratio"><span class="ratio ${x.red ? 'red' : 'orange'}">${fmtRatio(x)}</span></span></div>${top}</div></div>`;
 }
 
 const COLHEAD = (label) => `<div class="sticky"><div class="colhead"><span class="c-rank">#</span><span class="c-kw">${label}</span><span class="c-num">28 天</span><span class="c-num">平均</span><span class="c-ratio" title="${RULE}">倍数</span></div></div>`;
@@ -920,7 +928,7 @@ const REF_PAGE_CAP = 30;  // 正常 10 页；防页数读错一直翻
 const REF_TTL = 30 * 86400000;  // 存满 30 天才自动重拉
 const refDue = (at) => Date.now() - at >= REF_TTL;
 const ignoredDomain = (d) => [...IGNORE_DOMAINS].some((x) => d === x || d.endsWith('.' + x));
-const R = { status: 'idle', items: [], q: '', ind: 'all', filter: 'all', run: 0 };
+const R = { status: 'idle', items: [], q: '', ind: 'all', filter: 'all', young: false, run: 0, dom: {}, reg: {} };
 
 // 是不是就是我们要的那张表（全球、28 天、全部流量、引荐网站页签、checkout.stripe.com）
 function isRefPage(url) {
@@ -933,8 +941,9 @@ function isRefPage(url) {
 }
 
 async function refCall(tabId, name, ...args) {
+  // injectImmediately：页面还在加载也马上进去（默认要等 document_idle，停止打断不了，Codex 10-12 第三轮 #3）
   const [{ result }] = await chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId }, injectImmediately: true,
     func: (n, a) => (window.__pkRef ? window.__pkRef[n](...a) : { error: 'NOREF' }),
     args: [name, args],
   });
@@ -951,14 +960,28 @@ async function refStep(tabId, name, href) {
 }
 
 // 等表格出来再读：页面还在打开时注入会失败，表格在加载时读到 loading，都隔一秒再试；这一轮被停掉就不等了
+// 等一个 Promise，但这一轮被停掉或超过期限就不等了（返回 null）
+async function untilDone(p, alive, ms) {
+  const end = Date.now() + ms;
+  let done = false;
+  p.finally(() => { done = true; }).catch(() => {});
+  while (!done) {
+    if (!alive() || Date.now() > end) return null;
+    await sleep(200);
+  }
+  return p;
+}
+
 async function refReady(tabId, timeout, alive = () => true) {
   const until = Date.now() + timeout;
   for (;;) {
     if (!alive()) return null;
     try {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['ref.js'] });
-      const s = await refCall(tabId, 'scan');
-      if (!s.loading) return s;
+      const s = await untilDone((async () => {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['ref.js'], injectImmediately: true });
+        return refCall(tabId, 'scan');
+      })(), alive, Math.max(1000, until - Date.now()));
+      if (s && !s.loading) return s;
     } catch (e) {
       if (/No tab with id/.test(e.message)) throw new Error('引荐页被关掉了');
     }
@@ -980,10 +1003,13 @@ const refCache = async () => (await chrome.storage.local.get(REF_CACHE).catch(()
 
 // 正在跑的那一轮：{ cancelled, committing, tabId, made, touched, finished }。停止 / 新的一轮都要等旧的一轮收拾完
 let refJob = null;
-// 我们后台开的那页，用户切过去看过、或者在里面跳到别的页面了，就归用户了：读完不关（Codex 10-12 第二轮 #1）
-chrome.tabs.onActivated.addListener(({ tabId }) => { if (refJob && tabId === refJob.tabId) refJob.touched = true; });
+// 我们后台开的那页，用户切过去看过、或者在里面跳到别的页面了，就归用户了：读完不关（Codex 10-12 第二轮 #1）。
+// 按标签页记，一直记到那一轮收拾完——停止后马上重拉时，旧一轮还在收拾，用户碰它也要算在旧一轮身上（第三轮 #1）
+const refTabJobs = new Map();
+chrome.tabs.onActivated.addListener(({ tabId }) => { const j = refTabJobs.get(tabId); if (j) j.touched = true; });
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (refJob && tabId === refJob.tabId && info.url && !isRefPage(info.url)) refJob.touched = true;
+  const j = refTabJobs.get(tabId);
+  if (j && info.url && !isRefPage(info.url)) j.touched = true;
 });
 
 // 收拾这一轮用过的标签页：断开页面里的等待；自己开的、用户没碰过、还停在引荐页、又不在前台的才关，
@@ -995,12 +1021,12 @@ function cleanupRefJob(job) {
     job.cleanedTab = job.tabId;
     const { tabId, made } = job;
     job.cleaning = (async () => {
-      await refCall(tabId, 'cancel').catch(() => {});
+      await withTimeout(refCall(tabId, 'cancel'), 3000).catch(() => {});
       const t = await chrome.tabs.get(tabId).catch(() => null);
       if (!t || !isRefPage(t.url)) return;
       if (made && !job.touched && !t.active) await chrome.tabs.remove(tabId).catch(() => {});
       else if (!made) await refStep(tabId, 'first', t.url).catch(() => {});
-    })().catch(() => {});
+    })().catch(() => {}).finally(() => { if (refTabJobs.get(tabId) === job) refTabJobs.delete(tabId); });
   }
   return job.cleaning;
 }
@@ -1023,13 +1049,14 @@ async function loadRefs({ force = false } = {}) {
     // 拉到新的一份就是新的 30 天（Codex 10-12 第二轮 #8）
     const version = has ? cache.at : 0;
     if (!force && has && (!refDue(cache.at) || R.autoTriedFor === version)) { R.status = 'done'; return; }
-    if (!force) R.autoTriedFor = version;
+    if (!force || !has || refDue(cache.at)) R.autoTriedFor = version;  // 过期的那份手动拉过（哪怕停了）也不再自动拉
     // 对比的基线：存着的那份满 30 天了就拿它当上一份；没满 30 天时手动重拉，基线还是原来那份，节奏不乱
     const prev = !has ? null : refDue(cache.at) ? { at: cache.at, domains: cache.items.map((x) => x.d) } : cache.prev || null;
     Object.assign(R, { status: 'loading', stopping: false, err: null, page: 0, pages: 0, got: 0, made: false });
     render();
     const t = await refTab();
     Object.assign(job, t);
+    refTabJobs.set(t.tabId, job);
     if (!alive()) return;
     R.made = t.made;
     render();
@@ -1127,13 +1154,108 @@ async function stopRefs() {
 const refPrevSet = () => (R.prev ? (R._prevSet?.src === R.prev ? R._prevSet.set : (R._prevSet = { src: R.prev, set: new Set(R.prev.domains) }).set) : null);
 const refIsNew = (x) => { const p = refPrevSet(); return !!p && !p.has(x.d); };
 
+// ---------- 找站：域龄（用户 10-12 同意资深用户的建议：从在收钱的站里找新站）----------
+// 复用本机服务查注册日：先一次 20 个拿本机已经查过的（秒出），再 6 路并发查没查过的。
+// 主机名先归到可注册域名（app.mailerfind.com → mailerfind.com）；托管子域（*.vercel.app 之类）不查。
+// R.dom：主机名 → { d: 可注册域名, hosted }；R.reg：可注册域名 → { reg, source }
+
+const refRegOf = (x) => { const m = R.dom[x.d]; return m && !m.hosted ? R.reg[m.d] : null; };
+const refYoung = (x) => { const r = refRegOf(x); return !!r?.reg && ageMonths(r.reg) < 12; };
+
+function agePill(x) {
+  const m = R.dom[x.d];
+  if (!m) return '';
+  if (m.hosted) return `<span class="tag" title="托管在 ${esc(m.hosted)} 上，平台的注册日没有参考价值">托管</span>`;
+  const r = R.reg[m.d];
+  if (!r?.reg) return '';
+  const months = ageMonths(r.reg);
+  const cls = months < 12 ? 'fresh' : months < 24 ? 'mid' : 'old';
+  return `<span class="age ${cls}" title="${esc(m.d)} 注册于 ${esc(r.reg)}（${esc(r.source)}）">${ageText(r.reg)}</span>`;
+}
+
+async function lookupRefAges() {
+  const items = R.items;
+  if (!items.length || R.regFor === R.at) return;
+  R.regFor = R.at;
+  const my = (R.regRun = (R.regRun || 0) + 1);
+  const alive = () => my === R.regRun;
+  Object.assign(R, { regStatus: 'running', regDone: 0, regTotal: 0, regErr: null });
+  paintRefAges();
+  try {
+    const { items: groups } = await api('/normalize', { hosts: items.map((x) => ({ h: x.d, via: 'link' })), pageHost: 'sim.3ue.co' });
+    if (!alive()) return;
+    // 主机名 → 可注册域名：在归并结果里取能对上的最长那个
+    const keys = groups.map((g) => g.domain).sort((a, b) => b.length - a.length);
+    const hostedOf = new Map(groups.map((g) => [g.domain, g.hosted]));
+    for (const x of items) {
+      const d = keys.find((k) => x.d === k || x.d.endsWith('.' + k));
+      R.dom[x.d] = d ? { d, hosted: hostedOf.get(d) || null } : null;
+    }
+    const look = [...new Set(Object.values(R.dom).filter((m) => m && !m.hosted).map((m) => m.d))];
+    R.regTotal = look.length;
+    for (let i = 0; i < look.length; i += 20) {
+      const { results } = await api('/lookup', { domains: look.slice(i, i + 20), cachedOnly: true });
+      if (!alive()) return;
+      Object.assign(R.reg, results);
+    }
+    const todo = look.filter((d) => !R.reg[d]);
+    R.regDone = look.length - todo.length;
+    paintRefAges(true);
+    let next = 0, down = null;
+    const worker = async () => {
+      while (next < todo.length && alive() && !down) {
+        const d = todo[next++];
+        try {
+          const { results } = await api('/lookup', { domains: [d] });
+          if (!alive()) return;
+          Object.assign(R.reg, results);
+        } catch (e) {
+          if (e.down) { down = e; return; }
+          R.reg[d] = { reg: null, source: e.message };
+        }
+        R.regDone++;
+        paintRefAges();
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    if (!alive()) return;
+    if (down) throw down;
+    R.regStatus = 'done';
+  } catch (e) {
+    if (!alive()) return;
+    Object.assign(R, { regStatus: 'error', regErr: e });
+  }
+  paintRefAges(true);
+}
+
+// 查到一批就把列表里对应的胶囊换上（就地改，不重画整张表——重画会吞掉正好那一下的点击）；
+// 最多 0.4 秒画一次。开着「1 年内注册」筛选时名单本身在变，才重画列表
+let refPaintTimer = null;
+function paintRefAges(now = false) {
+  if (!now) { refPaintTimer ||= setTimeout(() => { refPaintTimer = null; paintRefAges(true); }, 400); return; }
+  if (S.view !== 'refs' || R.status !== 'done') return;
+  const young = R.items.filter(refYoung).length;
+  const chip = view.querySelector('[data-act="r-young"]');
+  if (chip) chip.innerHTML = `1 年内注册 ${young}`;
+  const st = view.querySelector('#rregs');
+  if (st) st.textContent = refRegText();
+  if (R.young) return renderRefList();
+  for (const el of view.querySelectorAll('#rlist .agecell')) {
+    const html = agePill({ d: el.dataset.host });
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+}
+
+const refRegText = () => (R.regStatus === 'running' ? `在查注册日 ${R.regDone} / ${R.regTotal || '…'}`
+  : R.regStatus === 'error' ? (R.regErr?.down ? '没查注册日：本机查询服务没有响应' : `注册日没查完：${R.regErr?.message || ''}`) : '');
+
 function refsShown() {
   const q = R.q.trim().toLowerCase();
-  return R.items.filter((x) => (R.ind === 'all' || x.industry === R.ind) && (R.filter === 'all' || refIsNew(x)) &&
+  return R.items.filter((x) => (R.ind === 'all' || x.industry === R.ind) && (R.filter === 'all' || refIsNew(x)) && (!R.young || refYoung(x)) &&
     (!q || x.d.includes(q) || x.industry.toLowerCase().includes(q)));
 }
 
-// 行业单独一行、放不下就省略（「未知」不写）；全球排名放在份额下面
+// 第二行：域龄胶囊 + 行业（一行放不下就省略，「未知」不写）；全球排名放在份额下面
 function refRow(x, no) {
   const ind = x.industry && x.industry !== '未知' ? x.industry : '';
   const rank = x.grank && x.grank !== '-' ? x.grank : '';
@@ -1142,7 +1264,7 @@ function refRow(x, no) {
       <a class="ext site" href="https://${esc(x.d)}/" title="打开 ${esc(x.d)}" aria-label="打开 ${esc(x.d)}">${ICON_OPEN}</a>
       ${refIsNew(x) ? '<span class="badge new" title="上一份里没有">首次出现</span>' : ''}</span></div>
     <span class="c-share"><b>${esc(x.share)}</b>${rank ? `<small title="Similarweb 全球排名">全球 ${esc(rank)}</small>` : ''}</span>
-    ${ind ? `<div class="kwmeta one" title="${esc(ind)}">${esc(ind)}</div>` : ''}</div>`;
+    <div class="kwmeta one refmeta"${ind ? ` title="${esc(ind)}"` : ''}><span class="agecell" data-host="${esc(x.d)}">${agePill(x)}</span>${ind ? `<span>${esc(ind)}</span>` : ''}</div></div>`;
 }
 
 function renderRefList() {
@@ -1150,8 +1272,24 @@ function renderRefList() {
   const list = view.querySelector('#rlist');
   const count = view.querySelector('#rcount');
   if (count) count.textContent = `${shown.length} 个`;
+  const copy = view.querySelector('[data-act="r-copy"]');
+  if (copy) { copy.textContent = `复制 ${shown.length} 个`; copy.disabled = !shown.length; }
   const no = new Map(R.items.map((x, i) => [x.d, i + 1]));
   if (list) list.innerHTML = shown.map((x) => refRow(x, no.get(x.d))).join('') || '<div class="empty">没有符合条件的站。</div>';
+}
+
+// 复制下面正显示的这些站（按当前筛选），粘到表格里一行一个
+async function copyRefs(btn) {
+  const shown = refsShown();
+  const no = new Map(R.items.map((x, i) => [x.d, i + 1]));
+  const lines = ['名次\t域名\t变化\t行业\t全球排名\t占 Stripe 引荐\t注册日\t域龄'];
+  for (const x of shown) {
+    const m = R.dom[x.d], r = refRegOf(x);
+    lines.push([no.get(x.d), x.d, refIsNew(x) ? '首次出现' : '', x.industry, x.grank === '-' ? '' : x.grank, x.share,
+      m?.hosted ? `托管于 ${m.hosted}` : r?.reg || '', r?.reg ? ageText(r.reg) : ''].join('\t'));
+  }
+  await navigator.clipboard.writeText(lines.join('\n'));
+  btn.textContent = `已复制 ${shown.length} 个`;
 }
 
 const REF_ABOUT = '把访客送进 checkout.stripe.com 的网站（= 在收钱的站）· sim 近 28 天 · 全球';
@@ -1160,6 +1298,7 @@ function renderRefs() {
   if (R.status === 'idle') { view.innerHTML = ''; loadRefs(); return; }
   // 同一个侧边栏开着跨过了 30 天：照样自动更新一次
   if (R.status === 'done' && refDue(R.at) && R.autoTriedFor !== R.at && !refJob) setTimeout(() => loadRefs(), 0);
+  if (R.status === 'done' && R.regFor !== R.at) setTimeout(() => lookupRefAges(), 0);
   // 出错、加载、停止时只留一个主动作：不放快捷条
   const top = '<div class="list">' + (R.status === 'done' ? hotShortcut() : '');
   if (R.status === 'stopped') {
@@ -1182,7 +1321,7 @@ function renderRefs() {
     html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.got}</span><span class="unit">个站</span><span class="chip" title="${esc(REF_ABOUT)}">Stripe 引荐</span></div>
       <button class="btn" type="button" data-act="r-stop"${R.stopping || refJob?.committing ? ' disabled' : ''}>${R.stopping ? '正在停止' : refJob?.committing ? '正在保存' : '停止'}</button></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="meta">${where} · 约半分钟，读完${R.made ? '关掉那个标签页' : '回到第 1 页'}${R.items.length ? ' · 下面先显示上一份' : ''}</div></section>`;
+      <div class="meta">${where} · 约半分钟${R.items.length ? ' · 下面先显示上一份' : ''}</div></section>`;
     if (!R.items.length) { view.innerHTML = html + '</div>'; return; }
   }
   const inds = new Map();
@@ -1194,11 +1333,14 @@ function renderRefs() {
   const chip = (k, label, n) => `<button class="fbtn${k === 'new' ? ' new' : ''}" type="button" data-act="r-filter" data-f="${k}" aria-pressed="${R.filter === k}"${n || k === 'all' ? '' : ' disabled'}>${label} ${n}</button>`;
   const md = (t) => new Date(t).toLocaleDateString('sv').slice(5);
   if (R.status !== 'loading') {
-    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.items.length}</span><span class="unit">个站</span><span class="chip" title="${esc(REF_ABOUT)}">Stripe 引荐</span></div>
-        <button class="btn" type="button" data-act="r-refresh" title="满 30 天自动重拉；点这里马上重拉">重新拉取</button></div>
-      <div class="meta">${md(R.at)} 拉取 · ${refDue(R.at) ? '已满 30 天，下次打开侧边栏时再自动试' : `${md(R.at + REF_TTL)} 自动更新`}${R.short ? ` · ${esc(R.short)}` : ''}${R.err ? ` · 更新失败：${esc(R.err.message)}` : ''}</div>
+    html += `<section class="status"><div class="stat-row"><div class="stat"><span class="big">${R.items.length}</span><span class="unit">个站</span></div>
+        <span class="btns"><button class="btn" type="button" data-act="r-copy" title="复制下面正显示的这些站（按当前筛选），粘到表格里一行一个">复制</button>
+        <button class="btn" type="button" data-act="r-refresh" title="满 30 天自动重拉；点这里马上重拉">重新拉取</button></span></div>
+      <div class="meta"><span class="about" title="${esc(REF_ABOUT)}">Stripe 引荐</span> · ${md(R.at)} 拉取 · ${refDue(R.at) ? '已满 30 天，下次打开侧边栏时再自动试' : `${md(R.at + REF_TTL)} 自动更新`}${R.short ? ` · ${esc(R.short)}` : ''}${R.err ? ` · 更新失败：${esc(R.err.message)}` : ''}</div>
       ${R.prev ? `<div class="diff"><span>比 ${md(R.prev.at)}</span>${chip('all', '全部', R.items.length)}${chip('new', '首次出现', newN)}</div>`
         : '<div class="meta">这是第一份；30 天后更新时会标出首次出现的站。</div>'}
+      <div class="diff"><span>域龄</span><button class="fbtn" type="button" data-act="r-young" aria-pressed="${!!R.young}" title="域名注册不到 1 年（本机服务查的注册日）">1 年内注册 ${R.items.filter(refYoung).length}</button>
+        <span id="rregs">${esc(refRegText())}</span></div>
       </section>`;
   }
   html += `<div class="sticky"><div class="toolbar two"><input class="search" type="search" placeholder="搜域名或行业" value="${esc(R.q)}" aria-label="搜域名或行业" data-act="r-search">
@@ -1256,6 +1398,8 @@ view.addEventListener('click', async (ev) => {
   else if (act === 'r-refresh') loadRefs({ force: true });
   else if (act === 'r-stop') stopRefs();
   else if (act === 'r-filter') { R.filter = el.dataset.f; scrollTop('refs'); render(); }
+  else if (act === 'r-young') { R.young = !R.young; scrollTop('refs'); render(); }
+  else if (act === 'r-copy') copyRefs(el);
 });
 
 view.addEventListener('input', (ev) => {

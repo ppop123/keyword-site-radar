@@ -438,7 +438,8 @@ def _one(domain):
     return domain, None, "；".join(notes), transient
 
 
-def lookup(domains):
+def lookup(domains, cached_only=False):
+    """cached_only：只回本机已经查过的，没查过的不联网、也不出现在结果里（找站先秒出已知的域龄）"""
     out, todo, now = {}, [], time.time()
     for d in domains:
         row = cache_get(d)
@@ -446,6 +447,8 @@ def lookup(domains):
             out[d] = {"reg": row["reg"], "source": row["source"], "cached": True}
         else:
             todo.append(d)
+    if cached_only:
+        return out
     with ThreadPoolExecutor(6) as ex:
         for d, reg, note, transient in ex.map(_one, todo):
             if reg or not transient:
@@ -504,7 +507,7 @@ class Handler(BaseHTTPRequestHandler):
                                                            req.get("pageHost") or "")})
             if self.path == "/lookup":
                 domains = [d for d in req.get("domains") or [] if isinstance(d, str)][:20]
-                return self._send(200, {"results": lookup(domains)})
+                return self._send(200, {"results": lookup(domains, req.get("cachedOnly") is True)})
             if self.path.startswith("/snapshot/"):
                 try:
                     if self.path == "/snapshot/get":

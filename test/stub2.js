@@ -14,9 +14,11 @@
     'redact pdf', 'pdf bates numbering'];
   const kwOf = (p, i) => (p === 1 && i < REAL_KW.length ? REAL_KW[i] : `kw ${p}-${i}`);
   // 每页偶数行达标；每 10 行一个红
+  const TOP = ['https://www.ilovepdf.com/organize-pdf?x=', 'https://smallpdf.com/pdf-tools?x=', 'https://www.adobe.com/acrobat/online/pdf-to-jpg.html?x=',
+    'https://pdfflex-new-tool.app/arrange?x=', 'https://www.sejda.com/organize-pdf-pages?x=', 'https://tools.pdf24.org/en/?x='];
   const row = (p, i) => (p === 1 && i === 8
     ? { i, kw: kwOf(p, i), kd: '-', t: '6.2K', v: '< 50', ratio: 123.4, ge: true, red: true, url: `http://example.com/${p}/${i}` }  // 极值：倍数列放不放得下
-    : { i, kw: kwOf(p, i), kd: '-', t: '1.2K', v: '100', ratio: i % 10 === 0 ? 30 : 8, ge: false, red: i % 10 === 0, url: `http://example.com/${p}/${i}` });
+    : { i, kw: kwOf(p, i), kd: '-', t: '1.2K', v: '100', ratio: i % 10 === 0 ? 30 : 8, ge: false, red: i % 10 === 0, url: TOP[(p * 7 + i) % TOP.length] + `${p}-${i}` });
   const page = { cur: 1 };
   const url = 'https://sim.3ue.co/#/organicsearch/pageAnalysis/website-keyword-v2/*/999/28d?key=test.com&Change=New';
   const sort = '点击量 降序';
